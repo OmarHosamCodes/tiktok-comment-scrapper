@@ -1,6 +1,6 @@
 import Archiver from "archiver";
 import { serve } from "bun";
-import homepage from "../public/index.html";
+import homepage from "./index.html";
 import { TiktokComment } from "./scraper";
 import type { CommentsData } from "./types";
 

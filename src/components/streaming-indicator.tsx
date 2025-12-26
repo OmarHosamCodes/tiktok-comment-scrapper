@@ -14,10 +14,10 @@ export function StreamingIndicator({
 	const currentPage = pageMatch ? parseInt(pageMatch[1], 10) : null;
 
 	return (
-		<div className="flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r from-primary/10 via-secondary/10 to-chart-3/10 border border-primary/20">
+		<div className="flex items-center gap-4 p-4 rounded-xl bg-linear-to-r from-primary/10 via-secondary/10 to-chart-3/10 border border-primary/20">
 			<div className="relative">
 				<div className="absolute inset-0 bg-primary/20 rounded-full animate-ping" />
-				<div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-gradient-to-br from-primary to-secondary">
+				<div className="relative flex h-10 w-10 items-center justify-center rounded-full bg-linear-to-br from-primary to-secondary">
 					<Loader2 className="h-5 w-5 text-primary-foreground animate-spin" />
 				</div>
 			</div>

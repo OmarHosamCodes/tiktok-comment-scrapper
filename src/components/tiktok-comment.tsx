@@ -83,8 +83,8 @@ export const TikTokComment = forwardRef<HTMLDivElement, TikTokCommentProps>(
 					<div
 						className={`
 						${isReply ? "h-8 w-8" : "h-10 w-10"} 
-						rounded-full ring-2 ring-border overflow-hidden flex-shrink-0
-						${imageError ? `bg-gradient-to-br ${avatarColor}` : "bg-muted"}
+						rounded-full ring-2 ring-border overflow-hidden shrink-0
+						${imageError ? `bg-linear-to-br ${avatarColor}` : "bg-muted"}
 					`}
 					>
 						{!imageError && comment.avatar ? (
@@ -101,7 +101,7 @@ export const TikTokComment = forwardRef<HTMLDivElement, TikTokCommentProps>(
 							<div
 								className={`
 								w-full h-full flex items-center justify-center 
-								bg-gradient-to-br ${avatarColor} text-white font-semibold
+								bg-linear-to-br ${avatarColor} text-white font-semibold
 								${isReply ? "text-xs" : "text-sm"}
 							`}
 							>
@@ -125,7 +125,7 @@ export const TikTokComment = forwardRef<HTMLDivElement, TikTokCommentProps>(
 
 						{/* Comment text */}
 						<p
-							className={`text-foreground/90 leading-relaxed break-words ${isReply ? "text-sm" : ""}`}
+							className={`text-foreground/90 leading-relaxed wrap-break-word ${isReply ? "text-sm" : ""}`}
 						>
 							{comment.comment}
 						</p>
