@@ -179,7 +179,7 @@ export function App() {
 		URL.revokeObjectURL(blobUrl);
 	}, [selectedComments]);
 
-	// Export selected as PNG ZIP
+	// Export selected as PNG ZIP - Optimized with parallel processing
 	const handleExportPng = useCallback(async () => {
 		if (selectedComments.length === 0) return;
 
@@ -189,24 +189,40 @@ export function App() {
 			const zip = new JSZip();
 			const folder = zip.folder("comments");
 
-			for (const comment of selectedComments) {
-				const commentEl = commentRefs.current.get(comment.comment_id);
-				if (commentEl) {
+			// Capture images in parallel batches for speed
+			const BATCH_SIZE = 10;
+			const batches: Comment[][] = [];
+
+			for (let i = 0; i < selectedComments.length; i += BATCH_SIZE) {
+				batches.push(selectedComments.slice(i, i + BATCH_SIZE));
+			}
+
+			for (const batch of batches) {
+				const capturePromises = batch.map(async (comment) => {
+					const commentEl = commentRefs.current.get(comment.comment_id);
+					if (!commentEl) return null;
+
 					try {
 						const dataUrl = await htmlToImage.toPng(commentEl, {
 							backgroundColor: "#0a0a0f",
-							pixelRatio: 2,
-							style: {
-								borderRadius: "12px",
-							},
+							pixelRatio: 1.5,
+							quality: 0.92,
 						});
-						const base64 = dataUrl.split(",")[1];
-						folder?.file(`${comment.comment_id}.png`, base64, { base64: true });
+						return { id: comment.comment_id, data: dataUrl.split(",")[1] };
 					} catch (err) {
 						console.error(
 							`Failed to capture comment ${comment.comment_id}:`,
 							err,
 						);
+						return null;
+					}
+				});
+
+				const results = await Promise.all(capturePromises);
+
+				for (const result of results) {
+					if (result) {
+						folder?.file(`${result.id}.png`, result.data, { base64: true });
 					}
 				}
 			}
