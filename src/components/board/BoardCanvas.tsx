@@ -11,7 +11,7 @@ import {
 	ReactFlow,
 } from "@xyflow/react";
 import { nanoid } from "nanoid";
-import { useCallback, useEffect } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
 	type BoardNode,
 	type GroupNodeData,
@@ -20,6 +20,7 @@ import {
 } from "../../stores/board-store";
 import { BoardToolbar } from "./BoardToolbar";
 import { CommentNode } from "./CommentNode";
+import { ContextMenu } from "./ContextMenu";
 import { GroupNode } from "./GroupNode";
 import { ReplyEdge } from "./ReplyEdge";
 
@@ -64,6 +65,31 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 	} = useBoardStore();
 
 	const { undo, redo } = useBoardHistory();
+
+	// Context menu state
+	const [contextMenu, setContextMenu] = useState<{
+		x: number;
+		y: number;
+		nodeId?: string;
+	} | null>(null);
+
+	// Handle context menu
+	const handleContextMenu = useCallback((event: React.MouseEvent) => {
+		event.preventDefault();
+		const target = event.target as HTMLElement;
+		const nodeElement = target.closest("[data-id]");
+		const nodeId = nodeElement?.getAttribute("data-id") || undefined;
+
+		setContextMenu({
+			x: event.clientX,
+			y: event.clientY,
+			nodeId,
+		});
+	}, []);
+
+	const handleCloseContextMenu = useCallback(() => {
+		setContextMenu(null);
+	}, []);
 
 	// Fetch board data
 	useEffect(() => {
@@ -348,7 +374,7 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 	}
 
 	return (
-		<div className="w-full h-screen">
+		<div className="w-full h-screen" onContextMenu={handleContextMenu}>
 			<ReactFlow
 				nodes={nodes}
 				edges={edges}
@@ -364,14 +390,17 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 				maxZoom={2}
 				proOptions={{ hideAttribution: true }}
 				className="bg-background"
+				onPaneClick={handleCloseContextMenu}
 			>
 				<Background
-					variant={BackgroundVariant.Dots}
-					gap={20}
-					size={1}
-					color="hsl(var(--muted-foreground) / 0.2)"
+					variant={BackgroundVariant.Lines}
+					gap={24}
+					color="hsl(var(--muted-foreground) / 0.15)"
 				/>
-				<Controls className="bg-card! border-border! shadow-lg!" />
+				<Controls
+					className="bg-card! border-border! shadow-lg!"
+					position="bottom-left"
+				/>
 				<MiniMap
 					className="bg-card! border-border!"
 					nodeColor={(node) => {
@@ -386,6 +415,19 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 					onDeleteSelected={handleDeleteSelected}
 				/>
 			</ReactFlow>
+
+			{/* Context Menu */}
+			{contextMenu && (
+				<ContextMenu
+					x={contextMenu.x}
+					y={contextMenu.y}
+					nodeId={contextMenu.nodeId}
+					onClose={handleCloseContextMenu}
+					onCreateGroup={handleCreateGroup}
+					onDeleteSelected={handleDeleteSelected}
+					slug={slug}
+				/>
+			)}
 
 			{/* Board title overlay */}
 			{board && (

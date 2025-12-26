@@ -111,7 +111,7 @@ export function BoardToolbar({
 	}, [board, getNodes]);
 
 	return (
-		<div className="absolute top-4 left-4 z-10 flex flex-col gap-2">
+		<div className="absolute bottom-24 left-4 z-10 flex flex-col gap-2">
 			{/* Zoom controls */}
 			<div className="flex items-center gap-1 bg-card/90 backdrop-blur rounded-lg p-1 shadow-lg border border-border">
 				<Button
