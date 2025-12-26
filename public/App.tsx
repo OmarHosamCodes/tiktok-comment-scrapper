@@ -1,15 +1,15 @@
 import {
-  AlertCircle,
-  Clock,
-  ExternalLink,
-  FileJson,
-  Image,
-  Loader2,
-  MessageCircle,
-  MessageSquare,
-  Sparkles,
-  Users,
-  Zap
+    AlertCircle,
+    Clock,
+    ExternalLink,
+    FileJson,
+    Image,
+    Loader2,
+    MessageCircle,
+    MessageSquare,
+    Sparkles,
+    Users,
+    Zap
 } from "lucide-react";
 import { useState } from "react";
 import { Alert, AlertDescription } from "./components/ui/alert";
@@ -17,11 +17,11 @@ import { Avatar, AvatarFallback, AvatarImage } from "./components/ui/avatar";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+    Card,
+    CardContent,
+    CardDescription,
+    CardHeader,
+    CardTitle,
 } from "./components/ui/card";
 import { Input } from "./components/ui/input";
 import { ScrollArea } from "./components/ui/scroll-area";
@@ -63,6 +63,7 @@ export function App() {
       /tiktok\.com\/@[^/]+\/video\/(\d+)/,
       /tiktok\.com\/.*?\/video\/(\d+)/,
       /vm\.tiktok\.com\/(\w+)/,
+      /vt\.tiktok\.com\/(\w+)/,
       /tiktok\.com\/t\/(\w+)/,
     ];
 
@@ -76,20 +77,30 @@ export function App() {
     return null;
   };
 
+  const isShortUrl = (input: string): boolean => {
+    return /(?:vm|vt)\.tiktok\.com\/\w+/.test(input) || /tiktok\.com\/t\/\w+/.test(input);
+  };
+
   const handleScrape = async () => {
-    const videoId = extractVideoId(url);
-    if (!videoId) {
+    const videoIdOrShortCode = extractVideoId(url);
+    if (!videoIdOrShortCode) {
       setError("Please enter a valid TikTok video URL or ID");
       return;
     }
 
     setStatus("loading");
-    setProgress("Initializing browser...");
+    setProgress("Initializing...");
     setError("");
     setResult(null);
 
     try {
-      const eventSource = new EventSource(`/api/scrape?id=${videoId}`);
+      // Check if it's a short URL that needs resolving
+      const needsResolve = isShortUrl(url);
+      const endpoint = needsResolve 
+        ? `/api/scrape?url=${encodeURIComponent(url)}`
+        : `/api/scrape?id=${videoIdOrShortCode}`;
+
+      const eventSource = new EventSource(endpoint);
 
       eventSource.onmessage = (event) => {
         const data = JSON.parse(event.data);
@@ -170,17 +181,17 @@ export function App() {
     <div className="min-h-screen flex flex-col bg-background">
       {/* Animated background */}
       <div className="fixed inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-0 left-1/4 w-96 h-96 bg-pink-500/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-cyan-500/10 rounded-full blur-3xl" />
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-purple-500/5 rounded-full blur-3xl" />
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-secondary/10 rounded-full blur-3xl" />
+        <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-chart-3/10 rounded-full blur-3xl" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-primary/5 rounded-full blur-3xl" />
       </div>
 
       {/* Header */}
       <header className="sticky top-0 z-50 w-full border-b border-border/40 bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
         <div className="container mx-auto px-4 md:px-6 h-16 flex items-center">
           <div className="flex items-center gap-3">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-pink-500 via-purple-500 to-cyan-500">
-              <MessageCircle className="h-5 w-5 text-white" />
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-gradient-to-br from-secondary via-primary to-chart-3">
+              <MessageCircle className="h-5 w-5 text-primary-foreground" />
             </div>
             <div>
               <h1 className="text-lg font-semibold gradient-text">
@@ -217,11 +228,11 @@ export function App() {
           <Card className="relative overflow-hidden gradient-border">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-lg">
-                <ExternalLink className="h-5 w-5 text-pink-500" />
+                <ExternalLink className="h-5 w-5 text-secondary" />
                 Enter TikTok Video
               </CardTitle>
               <CardDescription>
-                Paste a TikTok video URL or video ID to extract all comments
+                Paste a TikTok video URL (including short links like vt.tiktok.com) or video ID
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
@@ -230,7 +241,7 @@ export function App() {
                   type="text"
                   value={url}
                   onChange={(e) => setUrl(e.target.value)}
-                  placeholder="https://www.tiktok.com/@user/video/7581857692432583991"
+                  placeholder="https://www.tiktok.com/@user/video/... or https://vt.tiktok.com/..."
                   disabled={status === "loading"}
                   className="flex-1 h-11"
                   onKeyDown={(e) => e.key === "Enter" && handleScrape()}
@@ -261,8 +272,8 @@ export function App() {
                 <Alert variant="info" className="animate-in fade-in slide-in-from-top-2">
                   <div className="flex items-center gap-3">
                     <div className="relative flex h-2 w-2">
-                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400 opacity-75" />
-                      <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
+                      <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-info opacity-75" />
+                      <span className="relative inline-flex h-2 w-2 rounded-full bg-info" />
                     </div>
                     <AlertDescription>{progress}</AlertDescription>
                   </div>
@@ -284,11 +295,11 @@ export function App() {
             <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
               {/* Stats Grid */}
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                <Card className="hover:border-pink-500/50 transition-colors">
+                <Card className="hover:border-secondary/50 transition-colors">
                   <CardContent className="p-6">
                     <div className="flex items-center gap-4">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-pink-500/10">
-                        <MessageSquare className="h-6 w-6 text-pink-500" />
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-secondary/10">
+                        <MessageSquare className="h-6 w-6 text-secondary" />
                       </div>
                       <div>
                         <div className="text-2xl font-bold">{result.comments.length}</div>
@@ -298,11 +309,11 @@ export function App() {
                   </CardContent>
                 </Card>
 
-                <Card className="hover:border-purple-500/50 transition-colors">
+                <Card className="hover:border-primary/50 transition-colors">
                   <CardContent className="p-6">
                     <div className="flex items-center gap-4">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-purple-500/10">
-                        <MessageCircle className="h-6 w-6 text-purple-500" />
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+                        <MessageCircle className="h-6 w-6 text-primary" />
                       </div>
                       <div>
                         <div className="text-2xl font-bold">{totalReplies}</div>
@@ -312,11 +323,11 @@ export function App() {
                   </CardContent>
                 </Card>
 
-                <Card className="hover:border-cyan-500/50 transition-colors">
+                <Card className="hover:border-chart-3/50 transition-colors">
                   <CardContent className="p-6">
                     <div className="flex items-center gap-4">
-                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-cyan-500/10">
-                        <Users className="h-6 w-6 text-cyan-500" />
+                      <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-chart-3/10">
+                        <Users className="h-6 w-6 text-chart-3" />
                       </div>
                       <div>
                         <div className="text-2xl font-bold">{uniqueUsers}</div>
@@ -349,7 +360,7 @@ export function App() {
                   size="lg"
                   className="flex-1 sm:flex-none"
                 >
-                  <FileJson className="h-4 w-4 text-emerald-500" />
+                  <FileJson className="h-4 w-4 text-success" />
                   Download JSON
                 </Button>
                 <Button
@@ -359,7 +370,7 @@ export function App() {
                   size="lg"
                   className="flex-1 sm:flex-none"
                 >
-                  <Image className="h-4 w-4 text-pink-500" />
+                  <Image className="h-4 w-4 text-secondary-foreground" />
                   Download Images (ZIP)
                 </Button>
               </div>
@@ -369,7 +380,7 @@ export function App() {
                 <CardHeader className="pb-3">
                   <div className="flex items-center justify-between">
                     <CardTitle className="text-lg flex items-center gap-2">
-                      <MessageSquare className="h-5 w-5 text-purple-500" />
+                      <MessageSquare className="h-5 w-5 text-primary" />
                       Comments Preview
                     </CardTitle>
                     <Badge variant="secondary">First 10</Badge>
@@ -433,12 +444,12 @@ export function App() {
         <div className="container mx-auto px-4 md:px-6">
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
             <p className="text-sm text-muted-foreground">
-              Built with <span className="text-pink-500">Bun</span> +{" "}
-              <span className="text-cyan-500">React</span> +{" "}
-              <span className="text-purple-500">shadcn/ui</span>
+              Built with <span className="text-secondary">Bun</span> +{" "}
+              <span className="text-chart-3">React</span> +{" "}
+              <span className="text-primary">shadcn/ui</span>
             </p>
             <div className="flex items-center gap-2 text-muted-foreground text-sm">
-              <Sparkles className="h-4 w-4 text-yellow-500" />
+              <Sparkles className="h-4 w-4 text-warning" />
               Powered by Playwright
             </div>
           </div>

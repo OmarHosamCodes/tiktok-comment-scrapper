@@ -13,12 +13,9 @@ const server = serve({
         // Server-Sent Events endpoint for real-time scraping progress
         "/api/scrape": {
             async GET(req) {
-                const url = new URL(req.url);
-                const id = url.searchParams.get("id");
-
-                if (!id || !/^\d+$/.test(id)) {
-                    return Response.json({ error: "Invalid video ID" }, { status: 400 });
-                }
+                const urlParams = new URL(req.url);
+                let id = urlParams.searchParams.get("id");
+                const shortUrl = urlParams.searchParams.get("url");
 
                 // Create a readable stream for SSE
                 const stream = new ReadableStream({
@@ -31,6 +28,42 @@ const server = serve({
                         };
 
                         try {
+                            // If we have a short URL, resolve it first
+                            if (shortUrl && !id) {
+                                sendEvent("progress", { message: "Resolving short URL..." });
+
+                                try {
+                                    // Follow redirects to get the actual URL
+                                    const response = await fetch(shortUrl, {
+                                        method: "HEAD",
+                                        redirect: "follow",
+                                    });
+
+                                    const finalUrl = response.url;
+
+                                    // Extract video ID from the resolved URL
+                                    const videoIdMatch = finalUrl.match(/\/video\/(\d+)/);
+                                    if (videoIdMatch) {
+                                        id = videoIdMatch[1];
+                                        sendEvent("progress", { message: `Resolved to video ID: ${id}` });
+                                    } else {
+                                        throw new Error("Could not extract video ID from resolved URL");
+                                    }
+                                } catch (resolveError) {
+                                    sendEvent("error", {
+                                        message: `Failed to resolve short URL: ${resolveError instanceof Error ? resolveError.message : "Unknown error"}`,
+                                    });
+                                    controller.close();
+                                    return;
+                                }
+                            }
+
+                            if (!id || !/^\d+$/.test(id)) {
+                                sendEvent("error", { message: "Invalid video ID" });
+                                controller.close();
+                                return;
+                            }
+
                             sendEvent("progress", { message: "Starting scraper..." });
 
                             const scraper = new TiktokComment();
@@ -190,16 +223,18 @@ function generateCommentSvg(comment: CommentData, isReply = false): string {
     };
 
     const gradientId = `grad-${comment.comment_id}`;
+    // Using theme-compatible colors (dark mode friendly)
     const bgColor = isReply ? "#1a1a2e" : "#0f0f1a";
-    const borderColor = isReply ? "#6366f1" : "#ec4899";
+    // Using secondary and primary theme color approximations
+    const borderColor = isReply ? "#6366f1" : "#e05d50"; // primary-ish vs secondary-ish
 
     return `<?xml version="1.0" encoding="UTF-8"?>
 <svg width="${width}" height="${height}" xmlns="http://www.w3.org/2000/svg">
   <defs>
     <linearGradient id="${gradientId}" x1="0%" y1="0%" x2="100%" y2="0%">
-      <stop offset="0%" style="stop-color:#ec4899;stop-opacity:1" />
-      <stop offset="50%" style="stop-color:#a855f7;stop-opacity:1" />
-      <stop offset="100%" style="stop-color:#06b6d4;stop-opacity:1" />
+      <stop offset="0%" style="stop-color:#e05d50;stop-opacity:1" />
+      <stop offset="50%" style="stop-color:#6366f1;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#5d9de0;stop-opacity:1" />
     </linearGradient>
     <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
       <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="rgba(0,0,0,0.3)"/>
