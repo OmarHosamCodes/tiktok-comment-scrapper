@@ -7,6 +7,8 @@ export interface CommentData {
 	avatar: string;
 	total_reply: number;
 	replies: CommentData[];
+	parent_comment_id?: string; // For replies, tracks which comment this is replying to
+	is_orphan_reply?: boolean; // True if parent comment was not found
 }
 
 export class Comment {
@@ -18,6 +20,8 @@ export class Comment {
 	private _avatar: string;
 	private _total_reply: number;
 	private _replies: Comment[];
+	private _parent_comment_id?: string;
+	private _is_orphan_reply: boolean;
 
 	constructor(
 		comment_id: string,
@@ -28,6 +32,8 @@ export class Comment {
 		avatar: string,
 		total_reply: number,
 		replies: Comment[] = [],
+		parent_comment_id?: string,
+		is_orphan_reply = false,
 	) {
 		this._comment_id = comment_id;
 		this._username = username;
@@ -37,6 +43,8 @@ export class Comment {
 		this._avatar = avatar;
 		this._total_reply = total_reply;
 		this._replies = replies;
+		this._parent_comment_id = parent_comment_id;
+		this._is_orphan_reply = is_orphan_reply;
 	}
 
 	get comment_id(): string {
@@ -71,6 +79,14 @@ export class Comment {
 		return this._replies;
 	}
 
+	get parent_comment_id(): string | undefined {
+		return this._parent_comment_id;
+	}
+
+	get is_orphan_reply(): boolean {
+		return this._is_orphan_reply;
+	}
+
 	get dict(): CommentData {
 		return {
 			comment_id: this._comment_id,
@@ -81,6 +97,8 @@ export class Comment {
 			avatar: this._avatar,
 			total_reply: this._total_reply,
 			replies: this._replies.map((reply) => reply.dict),
+			parent_comment_id: this._parent_comment_id,
+			is_orphan_reply: this._is_orphan_reply,
 		};
 	}
 

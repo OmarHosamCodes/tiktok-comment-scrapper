@@ -1,8 +1,8 @@
 import {
-	chromium,
 	type Browser,
 	type BrowserContext,
 	type Page,
+	chromium,
 } from "playwright";
 import { Comment, Comments } from "../types";
 import { logger } from "../utils";
@@ -19,6 +19,7 @@ interface RawCommentData {
 	text: string;
 	create_time: number;
 	reply_comment_total: number;
+	reply_id?: string; // Parent comment ID if this is a reply
 }
 
 interface CommentListResponse {
@@ -29,19 +30,38 @@ interface CommentListResponse {
 		};
 	})[];
 	has_more: number;
+	cursor: number; // Cursor for next page from API
 	status_code?: number;
 }
+
+interface ReplyListResponse {
+	comments?: RawCommentData[];
+	has_more: number;
+	cursor: number; // Cursor for next page from API
+	status_code?: number;
+}
+
+// Retry configuration
+const RETRY_CONFIG = {
+	maxRetries: 3,
+	baseDelay: 1000, // 1 second
+	maxDelay: 4000, // 4 seconds
+};
 
 export class TiktokComment {
 	private static readonly BASE_URL = "https://www.tiktok.com";
 	private static readonly API_URL = `${TiktokComment.BASE_URL}/api`;
 
-	private id: string = "";
+	private id = "";
 	private browser: Browser | null = null;
 	private context: BrowserContext | null = null;
 	private page: Page | null = null;
 
-	private parseComment(data: RawCommentData, replies: Comment[] = []): Comment {
+	private parseComment(
+		data: RawCommentData,
+		replies: Comment[] = [],
+		parentCommentId?: string,
+	): Comment {
 		const parsedData = {
 			comment_id: data.cid,
 			username: data.user.unique_id,
@@ -50,6 +70,7 @@ export class TiktokComment {
 			create_time: data.create_time,
 			avatar: data.user.avatar_thumb?.url_list?.[0] ?? "",
 			total_reply: data.reply_comment_total,
+			parent_comment_id: parentCommentId || data.reply_id,
 		};
 
 		const comment = new Comment(
@@ -61,6 +82,7 @@ export class TiktokComment {
 			parsedData.avatar,
 			parsedData.total_reply,
 			replies,
+			parsedData.parent_comment_id,
 		);
 
 		logger.info(
@@ -75,7 +97,7 @@ export class TiktokComment {
 
 		logger.info("Launching browser...");
 		this.browser = await chromium.launch({
-			executablePath: '/usr/bin/chromium',
+			executablePath: "/usr/bin/chromium",
 			headless: true,
 		});
 
@@ -109,137 +131,198 @@ export class TiktokComment {
 		}
 	}
 
-	private async fetchWithBrowser(url: string): Promise<unknown> {
+	/**
+	 * Fetch with exponential backoff retry logic
+	 */
+	private async fetchWithRetry<T>(
+		url: string,
+		retryCount = 0,
+	): Promise<T | null> {
 		if (!this.page) {
 			throw new Error("Browser not initialized");
 		}
 
-		// Use page.evaluate to make the fetch request from within the browser context
-		// This ensures all cookies and session tokens are included
-		const response = await this.page.evaluate(async (fetchUrl: string) => {
-			const res = await fetch(fetchUrl, {
-				credentials: "include",
-				headers: {
-					Accept: "application/json",
-					"Content-Type": "application/json",
-				},
-			});
-			return res.json();
-		}, url);
+		try {
+			const response = await this.page.evaluate(async (fetchUrl: string) => {
+				const res = await fetch(fetchUrl, {
+					credentials: "include",
+					headers: {
+						Accept: "application/json",
+						"Content-Type": "application/json",
+					},
+				});
+				return res.json();
+			}, url);
 
-		return response;
-	}
-
-	private async *getAllReplies(comment_id: string): AsyncGenerator<Comment> {
-		let page = 1;
-		while (true) {
-			const replies = await this.getReplies(comment_id, 50, page);
-			if (!replies || replies.length === 0) break;
-			for (const reply of replies) {
-				yield reply;
+			return response as T;
+		} catch (error) {
+			if (retryCount < RETRY_CONFIG.maxRetries) {
+				const delay = Math.min(
+					RETRY_CONFIG.baseDelay * 2 ** retryCount,
+					RETRY_CONFIG.maxDelay,
+				);
+				logger.warn(
+					`Fetch failed, retrying in ${delay}ms (attempt ${retryCount + 1}/${
+						RETRY_CONFIG.maxRetries
+					})...`,
+				);
+				await new Promise((resolve) => setTimeout(resolve, delay));
+				return this.fetchWithRetry<T>(url, retryCount + 1);
 			}
-			page++;
+			logger.error(
+				`Fetch failed after ${RETRY_CONFIG.maxRetries} retries: ${error}`,
+			);
+			return null;
 		}
 	}
 
-	private async getReplies(
-		comment_id: string,
-		size: number = 50,
-		page: number = 1,
+	/**
+	 * Get all replies for a comment using cursor-based pagination
+	 */
+	private async getAllReplies(
+		commentId: string,
+		parentCommentId: string,
 	): Promise<Comment[]> {
-		const url = new URL(`${TiktokComment.API_URL}/comment/list/reply/`);
-		url.searchParams.set("aid", "1988");
-		url.searchParams.set("comment_id", comment_id);
-		url.searchParams.set("item_id", this.id);
-		url.searchParams.set("count", size.toString());
-		url.searchParams.set("cursor", ((page - 1) * size).toString());
+		const replies: Comment[] = [];
+		let cursor = 0;
+		let hasMore = true;
+		const size = 50;
 
-		try {
-			const json = (await this.fetchWithBrowser(url.toString())) as {
-				comments?: RawCommentData[];
-				status_code?: number;
-			};
+		while (hasMore) {
+			const url = new URL(`${TiktokComment.API_URL}/comment/list/reply/`);
+			url.searchParams.set("aid", "1988");
+			url.searchParams.set("comment_id", commentId);
+			url.searchParams.set("item_id", this.id);
+			url.searchParams.set("count", size.toString());
+			url.searchParams.set("cursor", cursor.toString());
+
+			const json = await this.fetchWithRetry<ReplyListResponse>(url.toString());
+
+			if (!json) {
+				logger.warn(`Failed to fetch replies for comment ${commentId}`);
+				break;
+			}
 
 			if (json.status_code && json.status_code !== 0) {
 				logger.warn(`Reply API returned status_code: ${json.status_code}`);
-				return [];
+				break;
 			}
 
-			if (!json.comments) return [];
-
-			const comments: Comment[] = [];
-			for (const commentData of json.comments) {
-				comments.push(this.parseComment(commentData));
+			if (!json.comments || json.comments.length === 0) {
+				break;
 			}
-			return comments;
-		} catch (error) {
-			logger.error(`Error fetching replies: ${error}`);
-			return [];
+
+			for (const replyData of json.comments) {
+				replies.push(this.parseComment(replyData, [], parentCommentId));
+			}
+
+			// Use the cursor returned by API for next page
+			hasMore = json.has_more === 1;
+			cursor = json.cursor;
+
+			// Safety check: if cursor didn't advance, break to avoid infinite loop
+			if (hasMore && json.cursor <= cursor - size) {
+				logger.warn("Cursor did not advance for replies, breaking loop");
+				break;
+			}
 		}
+
+		return replies;
 	}
 
+	/**
+	 * Get all comments using cursor-based pagination
+	 */
 	async getAllComments(id: string): Promise<Comments> {
-		let page = 1;
-		const data = await this.getComments(id, 50, page);
-
-		while (data.has_more) {
-			page++;
-			logger.info(`Fetching page ${page}...`);
-			const comments = await this.getComments(id, 50, page);
-			if (!comments.has_more && comments.comments.length === 0) break;
-			data.comments.push(...comments.comments);
-			if (!comments.has_more) break;
-		}
-
-		return data;
-	}
-
-	async getComments(
-		id: string,
-		size: number = 50,
-		page: number = 1,
-	): Promise<Comments> {
 		this.id = id;
+		const allComments: Comment[] = [];
+		let cursor = 0;
+		let hasMore = true;
+		const size = 50;
+		let caption = "";
+		let videoUrl = "";
+		let pageCount = 0;
 
-		const url = new URL(`${TiktokComment.API_URL}/comment/list/`);
-		url.searchParams.set("aid", "1988");
-		url.searchParams.set("aweme_id", id);
-		url.searchParams.set("count", size.toString());
-		url.searchParams.set("cursor", ((page - 1) * size).toString());
+		// Track seen comment IDs to avoid duplicates
+		const seenCommentIds = new Set<string>();
 
-		try {
-			const json = (await this.fetchWithBrowser(
+		while (hasMore) {
+			pageCount++;
+			logger.info(`Fetching page ${pageCount} (cursor: ${cursor})...`);
+
+			const url = new URL(`${TiktokComment.API_URL}/comment/list/`);
+			url.searchParams.set("aid", "1988");
+			url.searchParams.set("aweme_id", id);
+			url.searchParams.set("count", size.toString());
+			url.searchParams.set("cursor", cursor.toString());
+
+			const json = await this.fetchWithRetry<CommentListResponse>(
 				url.toString(),
-			)) as CommentListResponse;
+			);
+
+			if (!json) {
+				logger.warn(`Failed to fetch page ${pageCount}, stopping`);
+				break;
+			}
 
 			if (json.status_code && json.status_code !== 0) {
 				logger.warn(`API returned status_code: ${json.status_code}`);
-				return new Comments("", "", [], 0);
+				break;
 			}
 
-			const caption = json.comments?.[0]?.share_info?.title ?? "";
-			const video_url = json.comments?.[0]?.share_info?.url ?? "";
-			const has_more = json.has_more ?? 0;
+			if (!json.comments || json.comments.length === 0) {
+				logger.info(`No more comments on page ${pageCount}`);
+				break;
+			}
 
-			const comments: Comment[] = [];
-			for (const commentData of json.comments ?? []) {
-				const replies: Comment[] = [];
+			// Get caption and video URL from first response
+			if (!caption && json.comments[0]?.share_info) {
+				caption = json.comments[0].share_info.title ?? "";
+				videoUrl = json.comments[0].share_info.url ?? "";
+			}
+
+			for (const commentData of json.comments) {
+				// Skip if we've already seen this comment (duplicate)
+				if (seenCommentIds.has(commentData.cid)) {
+					logger.warn(`Skipping duplicate comment ${commentData.cid}`);
+					continue;
+				}
+				seenCommentIds.add(commentData.cid);
+
+				// Fetch replies if any
+				let replies: Comment[] = [];
 				if (commentData.reply_comment_total > 0) {
 					logger.info(
 						`Fetching ${commentData.reply_comment_total} replies for comment ${commentData.cid}...`,
 					);
-					for await (const reply of this.getAllReplies(commentData.cid)) {
-						replies.push(reply);
-					}
+					replies = await this.getAllReplies(commentData.cid, commentData.cid);
 				}
-				comments.push(this.parseComment(commentData, replies));
+
+				allComments.push(this.parseComment(commentData, replies));
 			}
 
-			return new Comments(caption, video_url, comments, has_more);
-		} catch (error) {
-			logger.error(`Error fetching comments: ${error}`);
-			return new Comments("", "", [], 0);
+			// Use the cursor returned by API for next page
+			hasMore = json.has_more === 1;
+			const newCursor = json.cursor;
+
+			// Safety check: if cursor didn't advance, break to avoid infinite loop
+			if (hasMore && newCursor <= cursor) {
+				logger.warn(
+					`Cursor did not advance (${cursor} -> ${newCursor}), breaking loop`,
+				);
+				break;
+			}
+			cursor = newCursor;
+
+			// Small delay between requests to avoid rate limiting
+			await new Promise((resolve) => setTimeout(resolve, 100));
 		}
+
+		logger.info(
+			`Finished scraping: ${allComments.length} comments across ${pageCount} pages`,
+		);
+
+		return new Comments(caption, videoUrl, allComments, 0);
 	}
 
 	async scrape(id: string): Promise<Comments> {

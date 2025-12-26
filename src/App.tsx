@@ -9,6 +9,7 @@ import {
 	FileJson,
 	Filter,
 	Image,
+	LayoutDashboard,
 	Loader2,
 	MessageCircle,
 	MessageSquare,
@@ -20,7 +21,6 @@ import {
 	Zap,
 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
-import { StreamingIndicator } from "./components/streaming-indicator";
 import { TikTokComment } from "./components/tiktok-comment";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Badge } from "./components/ui/badge";
@@ -35,12 +35,16 @@ import {
 import { Input } from "./components/ui/input";
 import { ScrollArea } from "./components/ui/scroll-area";
 import { Separator } from "./components/ui/separator";
-import { useScraper, type Comment } from "./hooks/use-scraper";
+import { type Comment, useScraper } from "./hooks/use-scraper";
 
 type FilterType = "all" | "comments" | "replies";
 type SortType = "newest" | "oldest" | "most_replies";
 
-export function App() {
+interface AppProps {
+	navigateToBoard: (slug: string) => void;
+}
+
+export function App({ navigateToBoard }: AppProps) {
 	const [url, setUrl] = useState("");
 	const [searchQuery, setSearchQuery] = useState("");
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -48,10 +52,10 @@ export function App() {
 	const [filterType, setFilterType] = useState<FilterType>("all");
 	const [sortType, setSortType] = useState<SortType>("newest");
 	const [showFilters, setShowFilters] = useState(false);
+	const [sendingToBoard, setSendingToBoard] = useState(false);
 	const commentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-	const { status, progress, result, streamingComments, error, scrape } =
-		useScraper();
+	const { status, result, error, scrape } = useScraper();
 
 	// Get all comments including replies flattened
 	const allComments = useMemo(() => {
@@ -269,6 +273,49 @@ export function App() {
 		URL.revokeObjectURL(blobUrl);
 	};
 
+	// Send comments to a new board
+	const handleSendToBoard = async () => {
+		if (!result) return;
+
+		setSendingToBoard(true);
+		try {
+			const response = await fetch("/api/boards", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					title: result.caption
+						? result.caption.slice(0, 100)
+						: `TikTok Comments - ${new Date().toLocaleDateString()}`,
+					videoUrl: result.video_url,
+					videoCaption: result.caption,
+					comments: allComments.map((c) => ({
+						commentId: c.comment_id,
+						username: c.username,
+						nickname: c.nickname,
+						comment: c.comment,
+						createTime: c.create_time,
+						avatar: c.avatar,
+						totalReply: c.total_reply,
+						parentCommentId: c.parent_comment_id,
+						isOrphanReply: c.is_orphan_reply,
+					})),
+				}),
+			});
+
+			if (!response.ok) {
+				throw new Error("Failed to create board");
+			}
+
+			const { board } = await response.json();
+			navigateToBoard(board.publicSlug);
+		} catch (err) {
+			console.error("Failed to send to board:", err);
+			alert("Failed to create board. Please try again.");
+		} finally {
+			setSendingToBoard(false);
+		}
+	};
+
 	const handleScrape = () => {
 		if (url.trim()) {
 			scrape(url);
@@ -347,22 +394,18 @@ export function App() {
 									value={url}
 									onChange={(e) => setUrl(e.target.value)}
 									placeholder="https://www.tiktok.com/@user/video/... or https://vt.tiktok.com/..."
-									disabled={status === "loading" || status === "streaming"}
+									disabled={status === "loading"}
 									className="flex-1 h-11"
 									onKeyDown={(e) => e.key === "Enter" && handleScrape()}
 								/>
 								<Button
 									onClick={handleScrape}
-									disabled={
-										status === "loading" ||
-										status === "streaming" ||
-										!url.trim()
-									}
+									disabled={status === "loading" || !url.trim()}
 									variant="gradient"
 									size="xl"
 									className="w-full sm:w-auto"
 								>
-									{status === "loading" || status === "streaming" ? (
+									{status === "loading" ? (
 										<>
 											<Loader2 className="h-4 w-4 animate-spin" />
 											Scraping...
@@ -375,14 +418,6 @@ export function App() {
 									)}
 								</Button>
 							</div>
-
-							{/* Streaming Indicator */}
-							{(status === "loading" || status === "streaming") && (
-								<StreamingIndicator
-									count={streamingComments.length}
-									progress={progress}
-								/>
-							)}
 
 							{/* Error */}
 							{error && (
@@ -519,7 +554,9 @@ export function App() {
 											<Filter className="h-4 w-4" />
 											Filters
 											<ChevronDown
-												className={`h-4 w-4 transition-transform ${showFilters ? "rotate-180" : ""}`}
+												className={`h-4 w-4 transition-transform ${
+													showFilters ? "rotate-180" : ""
+												}`}
 											/>
 										</Button>
 									</div>
@@ -700,8 +737,21 @@ export function App() {
 								</ScrollArea>
 							</Card>
 
-							{/* Download All Buttons */}
+							{/* Action Buttons */}
 							<div className="flex flex-col sm:flex-row gap-3">
+								<Button
+									onClick={handleSendToBoard}
+									disabled={sendingToBoard}
+									size="lg"
+									className="flex-1 sm:flex-none"
+								>
+									{sendingToBoard ? (
+										<Loader2 className="h-4 w-4 animate-spin" />
+									) : (
+										<LayoutDashboard className="h-4 w-4" />
+									)}
+									{sendingToBoard ? "Creating Board..." : "Send to Board"}
+								</Button>
 								<Button
 									onClick={handleDownloadJson}
 									variant="outline"
