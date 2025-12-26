@@ -21,17 +21,21 @@
 		"archiver": "^7.0.1",
 		"axios": "^1.13.2",
 		"bun-plugin-tailwind": "^0.1.2",
+		"chromium-bidi": "^12.0.1",
 		"class-variance-authority": "^0.7.1",
 		"clsx": "^2.1.1",
 		"commander": "^12.1.0",
+		"electron": "^39.2.7",
 		"html-to-image": "^1.11.13",
 		"jszip": "^3.10.1",
 		"lucide-react": "^0.562.0",
 		"playwright": "^1.57.0",
 		"react": "^19.2.3",
 		"react-dom": "^19.2.3",
+		"stream": "^0.0.3",
 		"tailwind-merge": "^3.4.0",
-		"tailwindcss": "^4.1.18"
+		"tailwindcss": "^4.1.18",
+		"util": "^0.12.5"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.3.10",
