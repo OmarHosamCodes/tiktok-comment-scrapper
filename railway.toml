@@ -1,0 +1,29 @@
+# ==========================================
+# Railway Configuration
+# ==========================================
+
+[build]
+# Use the Dockerfile for building
+builder = "dockerfile"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# Number of instances (Railway handles scaling)
+numReplicas = 1
+
+# Health check configuration
+healthcheckPath = "/"
+healthcheckTimeout = 60
+
+# Restart policy
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 3
+
+# Memory and CPU (adjust based on your Railway plan)
+# Playwright/Chromium requires decent memory (~1GB minimum recommended)
+# Uncomment if needed:
+# memoryMB = 2048
+
+[service]
+# Internal port the app listens on
+internalPort = 3000

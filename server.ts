@@ -4,8 +4,11 @@ import homepage from "./public/index.html";
 import { TiktokComment } from "./src/scraper";
 import type { CommentsData } from "./src/types";
 
+const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
+const isDevelopment = process.env.NODE_ENV !== "production";
+
 const server = serve({
-	port: 3000,
+	port: PORT,
 	idleTimeout: -1,
 	routes: {
 		"/": homepage,
@@ -189,7 +192,7 @@ const server = serve({
 		},
 	},
 
-	development: true,
+	development: isDevelopment,
 
 	fetch(_req) {
 		return new Response("Not Found", { status: 404 });
@@ -264,22 +267,21 @@ function generateCommentSvg(comment: CommentData, isReply = false): string {
   
   <!-- Comment text -->
   ${lines
-		.map(
-			(line, i) =>
-				`<text x="${padding + avatarSize + 16}" y="${padding + 70 + i * lineHeight}" fill="#e2e8f0" font-size="14" font-family="Inter, sans-serif">${escapeXml(line)}</text>`,
-		)
-		.join("\n  ")}
+			.map(
+				(line, i) =>
+					`<text x="${padding + avatarSize + 16}" y="${padding + 70 + i * lineHeight}" fill="#e2e8f0" font-size="14" font-family="Inter, sans-serif">${escapeXml(line)}</text>`,
+			)
+			.join("\n  ")}
   
   <!-- Timestamp -->
   <text x="${padding + avatarSize + 16}" y="${height - padding}" fill="#64748b" font-size="11" font-family="Inter, sans-serif">${escapeXml(comment.create_time)}</text>
   
   <!-- Reply count badge -->
-  ${
-		comment.total_reply > 0
+  ${comment.total_reply > 0
 			? `<rect x="${width - 100}" y="${height - 36}" width="80" height="24" fill="${borderColor}" rx="12" opacity="0.2"/>
   <text x="${width - 60}" y="${height - 20}" text-anchor="middle" fill="${borderColor}" font-size="11" font-weight="500" font-family="Inter, sans-serif">${comment.total_reply} replies</text>`
 			: ""
-	}
+		}
 </svg>`;
 }
 
