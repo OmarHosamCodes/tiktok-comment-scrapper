@@ -2,21 +2,7 @@
 # TikTok Comment Scraper - Railway Dockerfile
 # ==========================================
 
-# Stage 1: Install dependencies
-FROM oven/bun:1-alpine AS deps
-
-WORKDIR /app
-
-# Copy package files
-COPY package.json bun.lock* ./
-
-# Install dependencies
-RUN bun install --frozen-lockfile
-
-# ==========================================
-# Stage 2: Production image with Playwright
-# ==========================================
-FROM oven/bun:1-debian AS runner
+FROM oven/bun:1.3-debian AS runner
 
 # Install Playwright system dependencies for Chromium
 # Using Debian-based image for better Playwright compatibility
@@ -50,8 +36,11 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Copy dependencies from deps stage
-COPY --from=deps /app/node_modules ./node_modules
+# Copy package files first for better caching
+COPY package.json bun.lock* ./
+
+# Install dependencies directly in the runner stage
+RUN bun install --frozen-lockfile
 
 # Copy application source
 COPY . .
@@ -73,5 +62,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
     CMD wget --no-verbose --tries=1 --spider http://localhost:3000 || exit 1
 
-# Run the web server
-CMD ["bun", "run", "web"]
+# Run the web server directly with bun
+CMD ["bun", "server.ts"]
