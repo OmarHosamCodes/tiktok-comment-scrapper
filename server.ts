@@ -5,7 +5,9 @@ import { TiktokComment } from "./src/scraper";
 import type { CommentsData } from "./src/types";
 
 const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3000;
-const isDevelopment = process.env.NODE_ENV !== "production";
+// NOTE: development must be true for Bun's HTML bundler to process Tailwind CSS
+// This is required for bun-plugin-tailwind to work correctly
+const isDevelopment = true;
 
 const server = serve({
 	port: PORT,
