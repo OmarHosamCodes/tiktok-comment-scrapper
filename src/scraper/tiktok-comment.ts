@@ -1,3 +1,4 @@
+import { chromium, type Browser, type BrowserContext, type Page } from "playwright";
 import { Comment, Comments } from "../types";
 import { logger } from "../utils";
 
@@ -23,6 +24,7 @@ interface CommentListResponse {
     };
   })[];
   has_more: number;
+  status_code?: number;
 }
 
 export class TiktokComment {
@@ -30,6 +32,9 @@ export class TiktokComment {
   private static readonly API_URL = `${TiktokComment.BASE_URL}/api`;
 
   private id: string = "";
+  private browser: Browser | null = null;
+  private context: BrowserContext | null = null;
+  private page: Page | null = null;
 
   private parseComment(data: RawCommentData, replies: Comment[] = []): Comment {
     const parsedData = {
@@ -38,7 +43,7 @@ export class TiktokComment {
       nickname: data.user.nickname,
       comment: data.text,
       create_time: data.create_time,
-      avatar: data.user.avatar_thumb.url_list[0],
+      avatar: data.user.avatar_thumb?.url_list?.[0] ?? "",
       total_reply: data.reply_comment_total,
     };
 
@@ -58,6 +63,65 @@ export class TiktokComment {
     );
 
     return comment;
+  }
+
+  private async initBrowser(): Promise<void> {
+    if (this.browser) return;
+
+    logger.info("Launching browser...");
+    this.browser = await chromium.launch({
+      headless: true,
+    });
+
+    this.context = await this.browser.newContext({
+      userAgent:
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      viewport: { width: 1920, height: 1080 },
+      locale: "en-US",
+    });
+
+    this.page = await this.context.newPage();
+
+    // Navigate to TikTok to get cookies and session
+    logger.info("Initializing TikTok session...");
+    await this.page.goto(TiktokComment.BASE_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 60000,
+    });
+
+    // Wait a bit for cookies to be set
+    await this.page.waitForTimeout(2000);
+    logger.info("Browser initialized successfully");
+  }
+
+  private async closeBrowser(): Promise<void> {
+    if (this.browser) {
+      await this.browser.close();
+      this.browser = null;
+      this.context = null;
+      this.page = null;
+    }
+  }
+
+  private async fetchWithBrowser(url: string): Promise<unknown> {
+    if (!this.page) {
+      throw new Error("Browser not initialized");
+    }
+
+    // Use page.evaluate to make the fetch request from within the browser context
+    // This ensures all cookies and session tokens are included
+    const response = await this.page.evaluate(async (fetchUrl: string) => {
+      const res = await fetch(fetchUrl, {
+        credentials: "include",
+        headers: {
+          Accept: "application/json",
+          "Content-Type": "application/json",
+        },
+      });
+      return res.json();
+    }, url);
+
+    return response;
   }
 
   private async *getAllReplies(comment_id: string): AsyncGenerator<Comment> {
@@ -84,27 +148,41 @@ export class TiktokComment {
     url.searchParams.set("count", size.toString());
     url.searchParams.set("cursor", ((page - 1) * size).toString());
 
-    const response = await fetch(url.toString());
-    const json = (await response.json()) as { comments?: RawCommentData[] };
+    try {
+      const json = (await this.fetchWithBrowser(url.toString())) as {
+        comments?: RawCommentData[];
+        status_code?: number;
+      };
 
-    if (!json.comments) return [];
+      if (json.status_code && json.status_code !== 0) {
+        logger.warn(`Reply API returned status_code: ${json.status_code}`);
+        return [];
+      }
 
-    const comments: Comment[] = [];
-    for (const commentData of json.comments) {
-      comments.push(this.parseComment(commentData));
+      if (!json.comments) return [];
+
+      const comments: Comment[] = [];
+      for (const commentData of json.comments) {
+        comments.push(this.parseComment(commentData));
+      }
+      return comments;
+    } catch (error) {
+      logger.error(`Error fetching replies: ${error}`);
+      return [];
     }
-    return comments;
   }
 
   async getAllComments(id: string): Promise<Comments> {
     let page = 1;
     const data = await this.getComments(id, 50, page);
 
-    while (true) {
+    while (data.has_more) {
       page++;
+      logger.info(`Fetching page ${page}...`);
       const comments = await this.getComments(id, 50, page);
-      if (!comments.has_more) break;
+      if (!comments.has_more && comments.comments.length === 0) break;
       data.comments.push(...comments.comments);
+      if (!comments.has_more) break;
     }
 
     return data;
@@ -119,32 +197,52 @@ export class TiktokComment {
 
     const url = new URL(`${TiktokComment.API_URL}/comment/list/`);
     url.searchParams.set("aid", "1988");
-    url.searchParams.set("id", id);
+    url.searchParams.set("aweme_id", id);
     url.searchParams.set("count", size.toString());
     url.searchParams.set("cursor", ((page - 1) * size).toString());
 
-    const response = await fetch(url.toString());
-    const json = (await response.json()) as CommentListResponse;
+    try {
+      const json = (await this.fetchWithBrowser(
+        url.toString()
+      )) as CommentListResponse;
 
-    const caption = json.comments?.[0]?.share_info?.title ?? "";
-    const video_url = json.comments?.[0]?.share_info?.url ?? "";
-    const has_more = json.has_more ?? 0;
-
-    const comments: Comment[] = [];
-    for (const commentData of json.comments ?? []) {
-      const replies: Comment[] = [];
-      if (commentData.reply_comment_total > 0) {
-        for await (const reply of this.getAllReplies(commentData.cid)) {
-          replies.push(reply);
-        }
+      if (json.status_code && json.status_code !== 0) {
+        logger.warn(`API returned status_code: ${json.status_code}`);
+        return new Comments("", "", [], 0);
       }
-      comments.push(this.parseComment(commentData, replies));
-    }
 
-    return new Comments(caption, video_url, comments, has_more);
+      const caption = json.comments?.[0]?.share_info?.title ?? "";
+      const video_url = json.comments?.[0]?.share_info?.url ?? "";
+      const has_more = json.has_more ?? 0;
+
+      const comments: Comment[] = [];
+      for (const commentData of json.comments ?? []) {
+        const replies: Comment[] = [];
+        if (commentData.reply_comment_total > 0) {
+          logger.info(
+            `Fetching ${commentData.reply_comment_total} replies for comment ${commentData.cid}...`
+          );
+          for await (const reply of this.getAllReplies(commentData.cid)) {
+            replies.push(reply);
+          }
+        }
+        comments.push(this.parseComment(commentData, replies));
+      }
+
+      return new Comments(caption, video_url, comments, has_more);
+    } catch (error) {
+      logger.error(`Error fetching comments: ${error}`);
+      return new Comments("", "", [], 0);
+    }
   }
 
   async scrape(id: string): Promise<Comments> {
-    return this.getAllComments(id);
+    try {
+      await this.initBrowser();
+      const result = await this.getAllComments(id);
+      return result;
+    } finally {
+      await this.closeBrowser();
+    }
   }
 }
