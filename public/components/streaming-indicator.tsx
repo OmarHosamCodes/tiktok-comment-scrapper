@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Loader2, Radio } from "lucide-react";
 
 interface StreamingIndicatorProps {
 	count: number;
@@ -9,6 +9,10 @@ export function StreamingIndicator({
 	count,
 	progress,
 }: StreamingIndicatorProps) {
+	// Parse page number from progress message if available
+	const pageMatch = progress.match(/page (\d+)/i);
+	const currentPage = pageMatch ? parseInt(pageMatch[1], 10) : null;
+
 	return (
 		<div className="flex items-center gap-4 p-4 rounded-xl bg-gradient-to-r from-primary/10 via-secondary/10 to-chart-3/10 border border-primary/20">
 			<div className="relative">
@@ -18,27 +22,26 @@ export function StreamingIndicator({
 				</div>
 			</div>
 
-			<div className="flex-1">
-				<div className="flex items-center gap-2">
+			<div className="flex-1 min-w-0">
+				<div className="flex items-center gap-2 flex-wrap">
 					<span className="font-semibold text-foreground">
-						Streaming Comments
+						Fetching Comments
 					</span>
-					<span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-sm font-medium">
-						{count} fetched
-					</span>
+					{currentPage && (
+						<span className="px-2 py-0.5 rounded-full bg-primary/20 text-primary text-sm font-medium">
+							Page {currentPage}
+						</span>
+					)}
 				</div>
-				<p className="text-sm text-muted-foreground mt-0.5">{progress}</p>
+				<p className="text-sm text-muted-foreground mt-0.5 truncate">
+					{progress}
+				</p>
 			</div>
 
-			{/* Animated dots */}
-			<div className="flex gap-1">
-				{[0, 1, 2].map((i) => (
-					<div
-						key={i}
-						className="w-2 h-2 rounded-full bg-primary animate-bounce"
-						style={{ animationDelay: `${i * 0.15}s` }}
-					/>
-				))}
+			{/* Live indicator */}
+			<div className="flex items-center gap-2">
+				<Radio className="h-4 w-4 text-red-500 animate-pulse" />
+				<span className="text-xs text-muted-foreground font-medium">LIVE</span>
 			</div>
 		</div>
 	);

@@ -1,13 +1,18 @@
 import * as htmlToImage from "html-to-image";
 import {
 	AlertCircle,
+	ArrowDownAZ,
+	ArrowUpAZ,
 	Check,
+	ChevronDown,
 	ExternalLink,
 	FileJson,
+	Filter,
 	Image,
 	Loader2,
 	MessageCircle,
 	MessageSquare,
+	Reply,
 	Search,
 	Sparkles,
 	Users,
@@ -32,14 +37,20 @@ import { ScrollArea } from "./components/ui/scroll-area";
 import { Separator } from "./components/ui/separator";
 import { useScraper, type Comment } from "./hooks/use-scraper";
 
+type FilterType = "all" | "comments" | "replies";
+type SortType = "newest" | "oldest" | "most_replies";
+
 export function App() {
 	const [url, setUrl] = useState("");
 	const [searchQuery, setSearchQuery] = useState("");
 	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 	const [exporting, setExporting] = useState(false);
+	const [filterType, setFilterType] = useState<FilterType>("all");
+	const [sortType, setSortType] = useState<SortType>("newest");
+	const [showFilters, setShowFilters] = useState(false);
 	const commentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-	const { status, progress, result, streamingComments, error, scrape, reset } =
+	const { status, progress, result, streamingComments, error, scrape } =
 		useScraper();
 
 	// Get all comments including replies flattened
@@ -55,28 +66,71 @@ export function App() {
 		return flat;
 	}, [result]);
 
-	// Filter comments based on search
-	const filteredComments = useMemo(() => {
+	// Flatten all comments and replies for filtering
+	const flattenedComments = useMemo(() => {
 		if (!result) return [];
-		if (!searchQuery.trim()) return result.comments;
 
-		const query = searchQuery.toLowerCase();
-		return result.comments.filter((comment) => {
-			const matchesComment =
-				comment.comment.toLowerCase().includes(query) ||
-				comment.username.toLowerCase().includes(query) ||
-				comment.nickname.toLowerCase().includes(query);
+		const items: { comment: Comment; isReply: boolean; parentId?: string }[] =
+			[];
 
-			const matchesReplies = comment.replies.some(
-				(reply) =>
-					reply.comment.toLowerCase().includes(query) ||
-					reply.username.toLowerCase().includes(query) ||
-					reply.nickname.toLowerCase().includes(query),
+		for (const comment of result.comments) {
+			items.push({ comment, isReply: false });
+			for (const reply of comment.replies) {
+				items.push({
+					comment: reply,
+					isReply: true,
+					parentId: comment.comment_id,
+				});
+			}
+		}
+
+		return items;
+	}, [result]);
+
+	// Filter and sort comments
+	const filteredAndSortedComments = useMemo(() => {
+		if (!result) return [];
+
+		let items = [...flattenedComments];
+
+		// Apply filter
+		if (filterType === "comments") {
+			items = items.filter((item) => !item.isReply);
+		} else if (filterType === "replies") {
+			items = items.filter((item) => item.isReply);
+		}
+
+		// Apply search
+		if (searchQuery.trim()) {
+			const query = searchQuery.toLowerCase();
+			items = items.filter(
+				(item) =>
+					item.comment.comment.toLowerCase().includes(query) ||
+					item.comment.username.toLowerCase().includes(query) ||
+					item.comment.nickname.toLowerCase().includes(query),
 			);
+		}
 
-			return matchesComment || matchesReplies;
+		// Apply sort
+		items.sort((a, b) => {
+			if (sortType === "newest") {
+				return (
+					new Date(b.comment.create_time).getTime() -
+					new Date(a.comment.create_time).getTime()
+				);
+			} else if (sortType === "oldest") {
+				return (
+					new Date(a.comment.create_time).getTime() -
+					new Date(b.comment.create_time).getTime()
+				);
+			} else if (sortType === "most_replies") {
+				return b.comment.total_reply - a.comment.total_reply;
+			}
+			return 0;
 		});
-	}, [result, searchQuery]);
+
+		return items;
+	}, [flattenedComments, filterType, searchQuery, sortType, result]);
 
 	// Toggle comment selection
 	const toggleSelection = useCallback((id: string) => {
@@ -94,14 +148,11 @@ export function App() {
 	// Select all visible comments
 	const selectAll = useCallback(() => {
 		const ids = new Set<string>();
-		for (const comment of filteredComments) {
-			ids.add(comment.comment_id);
-			for (const reply of comment.replies) {
-				ids.add(reply.comment_id);
-			}
+		for (const item of filteredAndSortedComments) {
+			ids.add(item.comment.comment_id);
 		}
 		setSelectedIds(ids);
-	}, [filteredComments]);
+	}, [filteredAndSortedComments]);
 
 	// Deselect all
 	const deselectAll = useCallback(() => {
@@ -120,12 +171,12 @@ export function App() {
 		const blob = new Blob([JSON.stringify(selectedComments, null, 2)], {
 			type: "application/json",
 		});
-		const url = URL.createObjectURL(blob);
+		const blobUrl = URL.createObjectURL(blob);
 		const a = document.createElement("a");
-		a.href = url;
+		a.href = blobUrl;
 		a.download = `tiktok-comments-${Date.now()}.json`;
 		a.click();
-		URL.revokeObjectURL(url);
+		URL.revokeObjectURL(blobUrl);
 	}, [selectedComments]);
 
 	// Export selected as PNG ZIP
@@ -134,24 +185,11 @@ export function App() {
 
 		setExporting(true);
 		try {
-			// Dynamically import JSZip for bundling
 			const JSZip = (await import("jszip")).default;
 			const zip = new JSZip();
 			const folder = zip.folder("comments");
 
-			// Create a temporary container for rendering
-			const container = document.createElement("div");
-			container.style.position = "absolute";
-			container.style.left = "-9999px";
-			container.style.top = "-9999px";
-			container.style.width = "600px";
-			container.style.backgroundColor = "#0a0a0f";
-			container.style.padding = "16px";
-			container.style.borderRadius = "16px";
-			document.body.appendChild(container);
-
 			for (const comment of selectedComments) {
-				// Find the ref or create a temporary element
 				const commentEl = commentRefs.current.get(comment.comment_id);
 				if (commentEl) {
 					try {
@@ -173,15 +211,13 @@ export function App() {
 				}
 			}
 
-			document.body.removeChild(container);
-
 			const blob = await zip.generateAsync({ type: "blob" });
-			const url = URL.createObjectURL(blob);
+			const blobUrl = URL.createObjectURL(blob);
 			const a = document.createElement("a");
-			a.href = url;
+			a.href = blobUrl;
 			a.download = `tiktok-comments-${Date.now()}.zip`;
 			a.click();
-			URL.revokeObjectURL(url);
+			URL.revokeObjectURL(blobUrl);
 		} catch (err) {
 			console.error("Export failed:", err);
 		} finally {
@@ -196,12 +232,12 @@ export function App() {
 		const blob = new Blob([JSON.stringify(result, null, 2)], {
 			type: "application/json",
 		});
-		const url = URL.createObjectURL(blob);
+		const blobUrl = URL.createObjectURL(blob);
 		const a = document.createElement("a");
-		a.href = url;
+		a.href = blobUrl;
 		a.download = `tiktok-comments-${Date.now()}.json`;
 		a.click();
-		URL.revokeObjectURL(url);
+		URL.revokeObjectURL(blobUrl);
 	};
 
 	const handleScrape = () => {
@@ -259,7 +295,7 @@ export function App() {
 						</h2>
 						<p className="text-muted-foreground text-base md:text-lg max-w-2xl mx-auto">
 							Enter any TikTok video URL and extract all comments with their
-							replies. Search, select, and export as JSON or PNG images.
+							replies. Search, filter, select, and export as JSON or PNG images.
 						</p>
 					</div>
 
@@ -402,7 +438,7 @@ export function App() {
 								</Card>
 							)}
 
-							{/* Search and Selection Controls */}
+							{/* Search, Filter, and Selection Controls */}
 							<Card>
 								<CardHeader className="pb-3">
 									<div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
@@ -412,6 +448,9 @@ export function App() {
 										</CardTitle>
 										<div className="flex items-center gap-2 text-sm">
 											<Badge variant="secondary">
+												{filteredAndSortedComments.length} shown
+											</Badge>
+											<Badge variant="outline">
 												{selectedIds.size} selected
 											</Badge>
 										</div>
@@ -419,26 +458,135 @@ export function App() {
 								</CardHeader>
 
 								<CardContent className="space-y-4">
-									{/* Search Input */}
-									<div className="relative">
-										<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-										<Input
-											type="text"
-											value={searchQuery}
-											onChange={(e) => setSearchQuery(e.target.value)}
-											placeholder="Search by username or comment text..."
-											className="pl-10"
-										/>
-										{searchQuery && (
-											<button
-												type="button"
-												onClick={() => setSearchQuery("")}
-												className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-											>
-												<X className="h-4 w-4" />
-											</button>
-										)}
+									{/* Search and Filter Row */}
+									<div className="flex flex-col md:flex-row gap-3">
+										{/* Search Input */}
+										<div className="relative flex-1">
+											<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+											<Input
+												type="text"
+												value={searchQuery}
+												onChange={(e) => setSearchQuery(e.target.value)}
+												placeholder="Search by username or comment text..."
+												className="pl-10"
+											/>
+											{searchQuery && (
+												<button
+													type="button"
+													onClick={() => setSearchQuery("")}
+													className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+												>
+													<X className="h-4 w-4" />
+												</button>
+											)}
+										</div>
+
+										{/* Filter Toggle */}
+										<Button
+											variant="outline"
+											onClick={() => setShowFilters(!showFilters)}
+											className="gap-2"
+										>
+											<Filter className="h-4 w-4" />
+											Filters
+											<ChevronDown
+												className={`h-4 w-4 transition-transform ${showFilters ? "rotate-180" : ""}`}
+											/>
+										</Button>
 									</div>
+
+									{/* Filter and Sort Options */}
+									{showFilters && (
+										<div className="flex flex-wrap gap-4 p-4 rounded-lg bg-muted/30 animate-in fade-in slide-in-from-top-2">
+											{/* Filter Type */}
+											<div className="space-y-2">
+												<label className="text-sm font-medium text-muted-foreground">
+													Show
+												</label>
+												<div className="flex gap-2">
+													<Button
+														variant={
+															filterType === "all" ? "secondary" : "outline"
+														}
+														size="sm"
+														onClick={() => setFilterType("all")}
+														className="gap-1.5"
+													>
+														<MessageSquare className="h-3.5 w-3.5" />
+														All
+													</Button>
+													<Button
+														variant={
+															filterType === "comments"
+																? "secondary"
+																: "outline"
+														}
+														size="sm"
+														onClick={() => setFilterType("comments")}
+														className="gap-1.5"
+													>
+														<MessageCircle className="h-3.5 w-3.5" />
+														Comments Only
+													</Button>
+													<Button
+														variant={
+															filterType === "replies" ? "secondary" : "outline"
+														}
+														size="sm"
+														onClick={() => setFilterType("replies")}
+														className="gap-1.5"
+													>
+														<Reply className="h-3.5 w-3.5" />
+														Replies Only
+													</Button>
+												</div>
+											</div>
+
+											{/* Sort Type */}
+											<div className="space-y-2">
+												<label className="text-sm font-medium text-muted-foreground">
+													Sort by
+												</label>
+												<div className="flex gap-2">
+													<Button
+														variant={
+															sortType === "newest" ? "secondary" : "outline"
+														}
+														size="sm"
+														onClick={() => setSortType("newest")}
+														className="gap-1.5"
+													>
+														<ArrowDownAZ className="h-3.5 w-3.5" />
+														Newest
+													</Button>
+													<Button
+														variant={
+															sortType === "oldest" ? "secondary" : "outline"
+														}
+														size="sm"
+														onClick={() => setSortType("oldest")}
+														className="gap-1.5"
+													>
+														<ArrowUpAZ className="h-3.5 w-3.5" />
+														Oldest
+													</Button>
+													<Button
+														variant={
+															sortType === "most_replies"
+																? "secondary"
+																: "outline"
+														}
+														size="sm"
+														onClick={() => setSortType("most_replies")}
+														className="gap-1.5"
+													>
+														<MessageCircle className="h-3.5 w-3.5" />
+														Most Replies
+													</Button>
+												</div>
+											</div>
+										</div>
+									)}
 
 									{/* Selection Controls */}
 									<div className="flex flex-wrap gap-2">
@@ -488,14 +636,6 @@ export function App() {
 									</div>
 
 									<Separator />
-
-									{/* Filtered Results Info */}
-									{searchQuery && (
-										<p className="text-sm text-muted-foreground">
-											Showing {filteredComments.length} of{" "}
-											{result.comments.length} comments
-										</p>
-									)}
 								</CardContent>
 
 								<Separator />
@@ -503,50 +643,28 @@ export function App() {
 								{/* Comments List */}
 								<ScrollArea maxHeight="600px">
 									<div className="space-y-2 p-4">
-										{filteredComments.map((comment) => (
-											<div key={comment.comment_id} className="space-y-2">
-												{/* Main Comment */}
-												<TikTokComment
-													ref={(el) => {
-														if (el) {
-															commentRefs.current.set(comment.comment_id, el);
-														}
-													}}
-													comment={comment}
-													selected={selectedIds.has(comment.comment_id)}
-													onSelect={toggleSelection}
-													showCheckbox
-												/>
-
-												{/* Replies */}
-												{comment.replies.length > 0 && (
-													<div className="space-y-2">
-														{comment.replies.map((reply) => (
-															<TikTokComment
-																key={reply.comment_id}
-																ref={(el) => {
-																	if (el) {
-																		commentRefs.current.set(
-																			reply.comment_id,
-																			el,
-																		);
-																	}
-																}}
-																comment={reply}
-																isReply
-																selected={selectedIds.has(reply.comment_id)}
-																onSelect={toggleSelection}
-																showCheckbox
-															/>
-														))}
-													</div>
-												)}
-											</div>
+										{filteredAndSortedComments.map((item) => (
+											<TikTokComment
+												key={item.comment.comment_id}
+												ref={(el) => {
+													if (el) {
+														commentRefs.current.set(
+															item.comment.comment_id,
+															el,
+														);
+													}
+												}}
+												comment={item.comment}
+												isReply={item.isReply}
+												selected={selectedIds.has(item.comment.comment_id)}
+												onSelect={toggleSelection}
+												showCheckbox
+											/>
 										))}
 
-										{filteredComments.length === 0 && (
+										{filteredAndSortedComments.length === 0 && (
 											<div className="text-center py-8 text-muted-foreground">
-												No comments match your search.
+												No comments match your filters.
 											</div>
 										)}
 									</div>

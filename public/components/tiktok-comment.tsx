@@ -1,6 +1,5 @@
 import { Heart, MessageCircle } from "lucide-react";
-import { forwardRef } from "react";
-import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar";
+import { forwardRef, useState } from "react";
 
 interface Comment {
 	comment_id: string;
@@ -21,6 +20,25 @@ interface TikTokCommentProps {
 	showCheckbox?: boolean;
 }
 
+// Generate a consistent color based on username
+function getAvatarColor(username: string): string {
+	const colors = [
+		"from-pink-500 to-rose-500",
+		"from-violet-500 to-purple-500",
+		"from-blue-500 to-cyan-500",
+		"from-emerald-500 to-teal-500",
+		"from-orange-500 to-amber-500",
+		"from-red-500 to-pink-500",
+		"from-indigo-500 to-blue-500",
+		"from-fuchsia-500 to-purple-500",
+	];
+	let hash = 0;
+	for (let i = 0; i < username.length; i++) {
+		hash = username.charCodeAt(i) + ((hash << 5) - hash);
+	}
+	return colors[Math.abs(hash) % colors.length];
+}
+
 export const TikTokComment = forwardRef<HTMLDivElement, TikTokCommentProps>(
 	(
 		{
@@ -32,6 +50,9 @@ export const TikTokComment = forwardRef<HTMLDivElement, TikTokCommentProps>(
 		},
 		ref,
 	) => {
+		const [imageError, setImageError] = useState(false);
+		const avatarColor = getAvatarColor(comment.username);
+
 		return (
 			<div
 				ref={ref}
@@ -58,17 +79,38 @@ export const TikTokComment = forwardRef<HTMLDivElement, TikTokCommentProps>(
 				)}
 
 				<div className="flex gap-3">
-					{/* Avatar */}
-					<Avatar
-						className={`${isReply ? "h-8 w-8" : "h-10 w-10"} ring-2 ring-border`}
+					{/* Avatar - with fallback for broken images */}
+					<div
+						className={`
+						${isReply ? "h-8 w-8" : "h-10 w-10"} 
+						rounded-full ring-2 ring-border overflow-hidden flex-shrink-0
+						${imageError ? `bg-gradient-to-br ${avatarColor}` : "bg-muted"}
+					`}
 					>
-						<AvatarImage src={comment.avatar} alt={comment.username} />
-						<AvatarFallback className="bg-gradient-to-br from-primary to-secondary text-primary-foreground font-semibold text-sm">
-							{comment.nickname.charAt(0).toUpperCase()}
-						</AvatarFallback>
-					</Avatar>
+						{!imageError && comment.avatar ? (
+							<img
+								src={comment.avatar}
+								alt={comment.username}
+								className="w-full h-full object-cover"
+								onError={() => setImageError(true)}
+								loading="lazy"
+								referrerPolicy="no-referrer"
+								crossOrigin="anonymous"
+							/>
+						) : (
+							<div
+								className={`
+								w-full h-full flex items-center justify-center 
+								bg-gradient-to-br ${avatarColor} text-white font-semibold
+								${isReply ? "text-xs" : "text-sm"}
+							`}
+							>
+								{comment.nickname.charAt(0).toUpperCase()}
+							</div>
+						)}
+					</div>
 
-					<div className="flex-1 min-w-0 space-y-1.5">
+					<div className="flex-1 min-w-0 space-y-1.5 pr-8">
 						{/* Username */}
 						<div className="flex items-center gap-2">
 							<span
@@ -83,7 +125,7 @@ export const TikTokComment = forwardRef<HTMLDivElement, TikTokCommentProps>(
 
 						{/* Comment text */}
 						<p
-							className={`text-foreground/90 leading-relaxed ${isReply ? "text-sm" : ""}`}
+							className={`text-foreground/90 leading-relaxed break-words ${isReply ? "text-sm" : ""}`}
 						>
 							{comment.comment}
 						</p>
