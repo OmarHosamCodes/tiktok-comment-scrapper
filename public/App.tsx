@@ -1,19 +1,23 @@
+import * as htmlToImage from "html-to-image";
 import {
 	AlertCircle,
-	Clock,
+	Check,
 	ExternalLink,
 	FileJson,
 	Image,
 	Loader2,
 	MessageCircle,
 	MessageSquare,
+	Search,
 	Sparkles,
 	Users,
+	X,
 	Zap,
 } from "lucide-react";
-import { useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { StreamingIndicator } from "./components/streaming-indicator";
+import { TikTokComment } from "./components/tiktok-comment";
 import { Alert, AlertDescription } from "./components/ui/alert";
-import { Avatar, AvatarFallback, AvatarImage } from "./components/ui/avatar";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import {
@@ -26,112 +30,166 @@ import {
 import { Input } from "./components/ui/input";
 import { ScrollArea } from "./components/ui/scroll-area";
 import { Separator } from "./components/ui/separator";
-
-type Status = "idle" | "loading" | "success" | "error";
-
-interface Comment {
-	comment_id: string;
-	username: string;
-	nickname: string;
-	comment: string;
-	create_time: string;
-	avatar: string;
-	total_reply: number;
-	replies: Comment[];
-}
-
-interface ScrapeResult {
-	caption: string;
-	video_url: string;
-	comments: Comment[];
-	has_more: number;
-}
+import { useScraper, type Comment } from "./hooks/use-scraper";
 
 export function App() {
 	const [url, setUrl] = useState("");
-	const [status, setStatus] = useState<Status>("idle");
-	const [progress, setProgress] = useState("");
-	const [result, setResult] = useState<ScrapeResult | null>(null);
-	const [error, setError] = useState("");
+	const [searchQuery, setSearchQuery] = useState("");
+	const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+	const [exporting, setExporting] = useState(false);
+	const commentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-	const extractVideoId = (input: string): string | null => {
-		if (/^\d+$/.test(input.trim())) {
-			return input.trim();
-		}
+	const { status, progress, result, streamingComments, error, scrape, reset } =
+		useScraper();
 
-		const patterns = [
-			/tiktok\.com\/@[^/]+\/video\/(\d+)/,
-			/tiktok\.com\/.*?\/video\/(\d+)/,
-			/vm\.tiktok\.com\/(\w+)/,
-			/vt\.tiktok\.com\/(\w+)/,
-			/tiktok\.com\/t\/(\w+)/,
-		];
-
-		for (const pattern of patterns) {
-			const match = input.match(pattern);
-			if (match) {
-				return match[1];
+	// Get all comments including replies flattened
+	const allComments = useMemo(() => {
+		if (!result) return [];
+		const flat: Comment[] = [];
+		for (const comment of result.comments) {
+			flat.push(comment);
+			for (const reply of comment.replies) {
+				flat.push(reply);
 			}
 		}
+		return flat;
+	}, [result]);
 
-		return null;
-	};
+	// Filter comments based on search
+	const filteredComments = useMemo(() => {
+		if (!result) return [];
+		if (!searchQuery.trim()) return result.comments;
 
-	const isShortUrl = (input: string): boolean => {
-		return (
-			/(?:vm|vt)\.tiktok\.com\/\w+/.test(input) ||
-			/tiktok\.com\/t\/\w+/.test(input)
-		);
-	};
+		const query = searchQuery.toLowerCase();
+		return result.comments.filter((comment) => {
+			const matchesComment =
+				comment.comment.toLowerCase().includes(query) ||
+				comment.username.toLowerCase().includes(query) ||
+				comment.nickname.toLowerCase().includes(query);
 
-	const handleScrape = async () => {
-		const videoIdOrShortCode = extractVideoId(url);
-		if (!videoIdOrShortCode) {
-			setError("Please enter a valid TikTok video URL or ID");
-			return;
+			const matchesReplies = comment.replies.some(
+				(reply) =>
+					reply.comment.toLowerCase().includes(query) ||
+					reply.username.toLowerCase().includes(query) ||
+					reply.nickname.toLowerCase().includes(query),
+			);
+
+			return matchesComment || matchesReplies;
+		});
+	}, [result, searchQuery]);
+
+	// Toggle comment selection
+	const toggleSelection = useCallback((id: string) => {
+		setSelectedIds((prev) => {
+			const next = new Set(prev);
+			if (next.has(id)) {
+				next.delete(id);
+			} else {
+				next.add(id);
+			}
+			return next;
+		});
+	}, []);
+
+	// Select all visible comments
+	const selectAll = useCallback(() => {
+		const ids = new Set<string>();
+		for (const comment of filteredComments) {
+			ids.add(comment.comment_id);
+			for (const reply of comment.replies) {
+				ids.add(reply.comment_id);
+			}
 		}
+		setSelectedIds(ids);
+	}, [filteredComments]);
 
-		setStatus("loading");
-		setProgress("Initializing...");
-		setError("");
-		setResult(null);
+	// Deselect all
+	const deselectAll = useCallback(() => {
+		setSelectedIds(new Set());
+	}, []);
 
+	// Get selected comments
+	const selectedComments = useMemo(() => {
+		return allComments.filter((c) => selectedIds.has(c.comment_id));
+	}, [allComments, selectedIds]);
+
+	// Export selected as JSON
+	const handleExportJson = useCallback(() => {
+		if (selectedComments.length === 0) return;
+
+		const blob = new Blob([JSON.stringify(selectedComments, null, 2)], {
+			type: "application/json",
+		});
+		const url = URL.createObjectURL(blob);
+		const a = document.createElement("a");
+		a.href = url;
+		a.download = `tiktok-comments-${Date.now()}.json`;
+		a.click();
+		URL.revokeObjectURL(url);
+	}, [selectedComments]);
+
+	// Export selected as PNG ZIP
+	const handleExportPng = useCallback(async () => {
+		if (selectedComments.length === 0) return;
+
+		setExporting(true);
 		try {
-			// Check if it's a short URL that needs resolving
-			const needsResolve = isShortUrl(url);
-			const endpoint = needsResolve
-				? `/api/scrape?url=${encodeURIComponent(url)}`
-				: `/api/scrape?id=${videoIdOrShortCode}`;
+			// Dynamically import JSZip for bundling
+			const JSZip = (await import("jszip")).default;
+			const zip = new JSZip();
+			const folder = zip.folder("comments");
 
-			const eventSource = new EventSource(endpoint);
+			// Create a temporary container for rendering
+			const container = document.createElement("div");
+			container.style.position = "absolute";
+			container.style.left = "-9999px";
+			container.style.top = "-9999px";
+			container.style.width = "600px";
+			container.style.backgroundColor = "#0a0a0f";
+			container.style.padding = "16px";
+			container.style.borderRadius = "16px";
+			document.body.appendChild(container);
 
-			eventSource.onmessage = (event) => {
-				const data = JSON.parse(event.data);
-
-				if (data.type === "progress") {
-					setProgress(data.message);
-				} else if (data.type === "complete") {
-					setResult(data.result);
-					setStatus("success");
-					eventSource.close();
-				} else if (data.type === "error") {
-					setError(data.message);
-					setStatus("error");
-					eventSource.close();
+			for (const comment of selectedComments) {
+				// Find the ref or create a temporary element
+				const commentEl = commentRefs.current.get(comment.comment_id);
+				if (commentEl) {
+					try {
+						const dataUrl = await htmlToImage.toPng(commentEl, {
+							backgroundColor: "#0a0a0f",
+							pixelRatio: 2,
+							style: {
+								borderRadius: "12px",
+							},
+						});
+						const base64 = dataUrl.split(",")[1];
+						folder?.file(`${comment.comment_id}.png`, base64, { base64: true });
+					} catch (err) {
+						console.error(
+							`Failed to capture comment ${comment.comment_id}:`,
+							err,
+						);
+					}
 				}
-			};
+			}
 
-			eventSource.onerror = () => {
-				setError("Connection lost. Please try again.");
-				setStatus("error");
-				eventSource.close();
-			};
+			document.body.removeChild(container);
+
+			const blob = await zip.generateAsync({ type: "blob" });
+			const url = URL.createObjectURL(blob);
+			const a = document.createElement("a");
+			a.href = url;
+			a.download = `tiktok-comments-${Date.now()}.zip`;
+			a.click();
+			URL.revokeObjectURL(url);
 		} catch (err) {
-			setError(err instanceof Error ? err.message : "An error occurred");
-			setStatus("error");
+			console.error("Export failed:", err);
+		} finally {
+			setExporting(false);
 		}
-	};
+	}, [selectedComments]);
 
+	// Download all as JSON
 	const handleDownloadJson = () => {
 		if (!result) return;
 
@@ -146,34 +204,9 @@ export function App() {
 		URL.revokeObjectURL(url);
 	};
 
-	const handleDownloadZip = async () => {
-		if (!result) return;
-
-		setProgress("Generating comment images...");
-		setStatus("loading");
-
-		try {
-			const response = await fetch("/api/generate-zip", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify(result),
-			});
-
-			if (!response.ok) {
-				throw new Error("Failed to generate ZIP file");
-			}
-
-			const blob = await response.blob();
-			const url = URL.createObjectURL(blob);
-			const a = document.createElement("a");
-			a.href = url;
-			a.download = `tiktok-comments-${Date.now()}.zip`;
-			a.click();
-			URL.revokeObjectURL(url);
-			setStatus("success");
-		} catch (err) {
-			setError(err instanceof Error ? err.message : "Failed to generate ZIP");
-			setStatus("error");
+	const handleScrape = () => {
+		if (url.trim()) {
+			scrape(url);
 		}
 	};
 
@@ -213,7 +246,7 @@ export function App() {
 
 			{/* Main Content */}
 			<main className="flex-1 container mx-auto px-4 md:px-6 py-8 md:py-12 relative z-10">
-				<div className="max-w-3xl mx-auto space-y-8">
+				<div className="max-w-4xl mx-auto space-y-8">
 					{/* Hero Section */}
 					<div className="text-center space-y-4">
 						<Badge variant="gradient" className="mb-2">
@@ -226,7 +259,7 @@ export function App() {
 						</h2>
 						<p className="text-muted-foreground text-base md:text-lg max-w-2xl mx-auto">
 							Enter any TikTok video URL and extract all comments with their
-							replies. Download as JSON data or beautiful SVG images.
+							replies. Search, select, and export as JSON or PNG images.
 						</p>
 					</div>
 
@@ -249,18 +282,22 @@ export function App() {
 									value={url}
 									onChange={(e) => setUrl(e.target.value)}
 									placeholder="https://www.tiktok.com/@user/video/... or https://vt.tiktok.com/..."
-									disabled={status === "loading"}
+									disabled={status === "loading" || status === "streaming"}
 									className="flex-1 h-11"
 									onKeyDown={(e) => e.key === "Enter" && handleScrape()}
 								/>
 								<Button
 									onClick={handleScrape}
-									disabled={status === "loading" || !url.trim()}
+									disabled={
+										status === "loading" ||
+										status === "streaming" ||
+										!url.trim()
+									}
 									variant="gradient"
 									size="xl"
 									className="w-full sm:w-auto"
 								>
-									{status === "loading" ? (
+									{status === "loading" || status === "streaming" ? (
 										<>
 											<Loader2 className="h-4 w-4 animate-spin" />
 											Scraping...
@@ -274,20 +311,12 @@ export function App() {
 								</Button>
 							</div>
 
-							{/* Progress */}
-							{status === "loading" && (
-								<Alert
-									variant="info"
-									className="animate-in fade-in slide-in-from-top-2"
-								>
-									<div className="flex items-center gap-3">
-										<div className="relative flex h-2 w-2">
-											<span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-info opacity-75" />
-											<span className="relative inline-flex h-2 w-2 rounded-full bg-info" />
-										</div>
-										<AlertDescription>{progress}</AlertDescription>
-									</div>
-								</Alert>
+							{/* Streaming Indicator */}
+							{(status === "loading" || status === "streaming") && (
+								<StreamingIndicator
+									count={streamingComments.length}
+									progress={progress}
+								/>
 							)}
 
 							{/* Error */}
@@ -373,7 +402,158 @@ export function App() {
 								</Card>
 							)}
 
-							{/* Download Buttons */}
+							{/* Search and Selection Controls */}
+							<Card>
+								<CardHeader className="pb-3">
+									<div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center justify-between">
+										<CardTitle className="text-lg flex items-center gap-2">
+											<MessageSquare className="h-5 w-5 text-primary" />
+											All Comments
+										</CardTitle>
+										<div className="flex items-center gap-2 text-sm">
+											<Badge variant="secondary">
+												{selectedIds.size} selected
+											</Badge>
+										</div>
+									</div>
+								</CardHeader>
+
+								<CardContent className="space-y-4">
+									{/* Search Input */}
+									<div className="relative">
+										<Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+										<Input
+											type="text"
+											value={searchQuery}
+											onChange={(e) => setSearchQuery(e.target.value)}
+											placeholder="Search by username or comment text..."
+											className="pl-10"
+										/>
+										{searchQuery && (
+											<button
+												type="button"
+												onClick={() => setSearchQuery("")}
+												className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+											>
+												<X className="h-4 w-4" />
+											</button>
+										)}
+									</div>
+
+									{/* Selection Controls */}
+									<div className="flex flex-wrap gap-2">
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={selectAll}
+											className="gap-1.5"
+										>
+											<Check className="h-3.5 w-3.5" />
+											Select All
+										</Button>
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={deselectAll}
+											className="gap-1.5"
+										>
+											<X className="h-3.5 w-3.5" />
+											Deselect All
+										</Button>
+										<div className="flex-1" />
+										<Button
+											variant="outline"
+											size="sm"
+											onClick={handleExportJson}
+											disabled={selectedIds.size === 0}
+											className="gap-1.5"
+										>
+											<FileJson className="h-3.5 w-3.5 text-success" />
+											Export Selected JSON
+										</Button>
+										<Button
+											variant="secondary"
+											size="sm"
+											onClick={handleExportPng}
+											disabled={selectedIds.size === 0 || exporting}
+											className="gap-1.5"
+										>
+											{exporting ? (
+												<Loader2 className="h-3.5 w-3.5 animate-spin" />
+											) : (
+												<Image className="h-3.5 w-3.5" />
+											)}
+											Export Selected PNG
+										</Button>
+									</div>
+
+									<Separator />
+
+									{/* Filtered Results Info */}
+									{searchQuery && (
+										<p className="text-sm text-muted-foreground">
+											Showing {filteredComments.length} of{" "}
+											{result.comments.length} comments
+										</p>
+									)}
+								</CardContent>
+
+								<Separator />
+
+								{/* Comments List */}
+								<ScrollArea maxHeight="600px">
+									<div className="space-y-2 p-4">
+										{filteredComments.map((comment) => (
+											<div key={comment.comment_id} className="space-y-2">
+												{/* Main Comment */}
+												<TikTokComment
+													ref={(el) => {
+														if (el) {
+															commentRefs.current.set(comment.comment_id, el);
+														}
+													}}
+													comment={comment}
+													selected={selectedIds.has(comment.comment_id)}
+													onSelect={toggleSelection}
+													showCheckbox
+												/>
+
+												{/* Replies */}
+												{comment.replies.length > 0 && (
+													<div className="space-y-2">
+														{comment.replies.map((reply) => (
+															<TikTokComment
+																key={reply.comment_id}
+																ref={(el) => {
+																	if (el) {
+																		commentRefs.current.set(
+																			reply.comment_id,
+																			el,
+																		);
+																	}
+																}}
+																comment={reply}
+																isReply
+																selected={selectedIds.has(reply.comment_id)}
+																onSelect={toggleSelection}
+																showCheckbox
+															/>
+														))}
+													</div>
+												)}
+											</div>
+										))}
+
+										{filteredComments.length === 0 && (
+											<div className="text-center py-8 text-muted-foreground">
+												No comments match your search.
+											</div>
+										)}
+									</div>
+								</ScrollArea>
+							</Card>
+
+							{/* Download All Buttons */}
 							<div className="flex flex-col sm:flex-row gap-3">
 								<Button
 									onClick={handleDownloadJson}
@@ -382,79 +562,9 @@ export function App() {
 									className="flex-1 sm:flex-none"
 								>
 									<FileJson className="h-4 w-4 text-success" />
-									Download JSON
-								</Button>
-								<Button
-									onClick={handleDownloadZip}
-									disabled={status === "loading"}
-									variant="secondary"
-									size="lg"
-									className="flex-1 sm:flex-none"
-								>
-									<Image className="h-4 w-4 text-secondary-foreground" />
-									Download Images (ZIP)
+									Download All JSON
 								</Button>
 							</div>
-
-							{/* Comments Preview */}
-							<Card>
-								<CardHeader className="pb-3">
-									<div className="flex items-center justify-between">
-										<CardTitle className="text-lg flex items-center gap-2">
-											<MessageSquare className="h-5 w-5 text-primary" />
-											Comments Preview
-										</CardTitle>
-										<Badge variant="secondary">First 10</Badge>
-									</div>
-								</CardHeader>
-								<Separator />
-								<ScrollArea maxHeight="480px">
-									<div className="divide-y divide-border">
-										{result.comments.slice(0, 10).map((comment) => (
-											<div
-												key={comment.comment_id}
-												className="p-4 hover:bg-muted/50 transition-colors"
-											>
-												<div className="flex gap-4">
-													<Avatar className="h-10 w-10">
-														<AvatarImage
-															src={comment.avatar}
-															alt={comment.username}
-														/>
-														<AvatarFallback>
-															{comment.nickname.charAt(0).toUpperCase()}
-														</AvatarFallback>
-													</Avatar>
-													<div className="flex-1 min-w-0 space-y-1">
-														<div className="flex items-center gap-2 flex-wrap">
-															<span className="font-medium text-foreground">
-																{comment.nickname}
-															</span>
-															<span className="text-muted-foreground text-sm">
-																@{comment.username}
-															</span>
-														</div>
-														<p className="text-foreground/90 text-sm">
-															{comment.comment}
-														</p>
-														<div className="flex items-center gap-4 text-xs text-muted-foreground pt-1">
-															<span className="flex items-center gap-1">
-																<Clock className="h-3 w-3" />
-																{comment.create_time}
-															</span>
-															{comment.total_reply > 0 && (
-																<Badge variant="secondary" className="text-xs">
-																	{comment.total_reply} replies
-																</Badge>
-															)}
-														</div>
-													</div>
-												</div>
-											</div>
-										))}
-									</div>
-								</ScrollArea>
-							</Card>
 						</div>
 					)}
 				</div>
