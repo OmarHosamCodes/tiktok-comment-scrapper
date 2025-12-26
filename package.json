@@ -6,15 +6,27 @@
   "scripts": {
     "start": "bun run src/index.ts",
     "dev": "bun --watch src/index.ts",
+    "web": "bun run server.ts",
+    "web:dev": "bun --watch server.ts",
     "build": "bun build src/index.ts --outdir dist --target bun",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@types/archiver": "^7.0.0",
+    "@types/react": "^19.2.7",
+    "@types/react-dom": "^19.2.3",
+    "archiver": "^7.0.1",
+    "bun-plugin-tailwind": "^0.1.2",
     "commander": "^12.1.0",
-    "playwright": "^1.57.0"
+    "playwright": "^1.57.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3",
+    "tailwindcss": "^4.1.18"
   },
   "devDependencies": {
     "@types/bun": "^1.3.5",
     "typescript": "^5.7.2"
-  }
+  },
+  "module": "src/index.ts",
+  "private": true
 }
