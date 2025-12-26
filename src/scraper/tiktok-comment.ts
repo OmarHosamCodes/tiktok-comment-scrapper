@@ -1,7 +1,7 @@
 import {
+	chromium,
 	type Browser,
 	type BrowserContext,
-	chromium,
 	type Page,
 } from "playwright";
 import { Comment, Comments } from "../types";
@@ -75,6 +75,7 @@ export class TiktokComment {
 
 		logger.info("Launching browser...");
 		this.browser = await chromium.launch({
+			executablePath: '/usr/bin/chromium',
 			headless: true,
 		});
 
