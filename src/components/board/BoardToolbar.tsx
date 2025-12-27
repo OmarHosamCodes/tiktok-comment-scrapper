@@ -1,3 +1,4 @@
+import { PngExportOptions } from "@/constants/png-options";
 import { useReactFlow } from "@xyflow/react";
 import { toPng } from "html-to-image";
 import { jsPDF } from "jspdf";
@@ -60,10 +61,7 @@ export function BoardToolbar({
 		if (!flowElement) return;
 
 		try {
-			const dataUrl = await toPng(flowElement, {
-				backgroundColor: "#0a0a0f",
-				pixelRatio: 2,
-			});
+			const dataUrl = await toPng(flowElement, PngExportOptions);
 
 			const img = new window.Image();
 			img.src = dataUrl;

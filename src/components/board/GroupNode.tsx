@@ -21,7 +21,7 @@ export function GroupNode({ data, selected }: GroupNodeProps) {
 			}}
 		>
 			<NodeResizer
-				color={data.color || "#6366f1"}
+				color={data.color || "var(--primary)"}
 				isVisible={selected}
 				minWidth={250}
 				minHeight={200}

@@ -35,6 +35,7 @@ import {
 import { Input } from "./components/ui/input";
 import { ScrollArea } from "./components/ui/scroll-area";
 import { Separator } from "./components/ui/separator";
+import { PngExportOptions } from "./constants/png-options";
 import { type Comment, useScraper } from "./hooks/use-scraper";
 
 type FilterType = "all" | "comments" | "replies";
@@ -207,24 +208,10 @@ export function App({ navigateToBoard }: AppProps) {
 					if (!commentEl) return null;
 
 					try {
-						const dataUrl = await htmlToImage.toPng(commentEl, {
-							backgroundColor: "#0a0a0f",
-							pixelRatio: 1.5,
-							quality: 0.92,
-							skipFonts: true,
-							fontEmbedCSS: "",
-							preferredFontFormat: "woff2",
-							filter: (node: Node) => {
-								// Skip link elements that point to external stylesheets
-								if (node instanceof HTMLLinkElement) {
-									const href = node.getAttribute("href");
-									if (href?.includes("fonts.googleapis.com")) {
-										return false;
-									}
-								}
-								return true;
-							},
-						});
+						const dataUrl = await htmlToImage.toPng(
+							commentEl,
+							PngExportOptions,
+						);
 						return { id: comment.comment_id, data: dataUrl.split(",")[1] };
 					} catch (err) {
 						console.error(

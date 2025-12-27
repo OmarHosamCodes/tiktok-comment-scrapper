@@ -1,7 +1,6 @@
 import {
 	Background,
 	BackgroundVariant,
-	Controls,
 	type EdgeChange,
 	MarkerType,
 	MiniMap,
@@ -299,7 +298,7 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 			data: {
 				dbId: "",
 				label: "New Group",
-				color: "#6366f1",
+				color: "var(--primary)",
 			},
 			zIndex: -1,
 		};
@@ -393,14 +392,12 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 				onPaneClick={handleCloseContextMenu}
 			>
 				<Background
-					variant={BackgroundVariant.Lines}
-					gap={24}
-					color="hsl(var(--muted-foreground) / 0.15)"
+					variant={BackgroundVariant.Dots}
+					gap={50}
+					color="var(--foreground)"
+					lineWidth={0.05}
 				/>
-				<Controls
-					className="bg-card! border-border! shadow-lg!"
-					position="bottom-left"
-				/>
+
 				<MiniMap
 					className="bg-card! border-border!"
 					nodeColor={(node) => {

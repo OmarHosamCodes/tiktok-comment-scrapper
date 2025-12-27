@@ -28,12 +28,12 @@ export function CommentNode({ data, selected }: CommentNodeProps) {
 			<Handle
 				type="target"
 				position={Position.Top}
-				className="bg-primary! w-3! h-3!"
+				className="bg-accent! w-3.5! h-3.5!"
 			/>
 			<Handle
 				type="source"
 				position={Position.Bottom}
-				className="bg-primary! w-3! h-3!"
+				className="bg-accent! w-3.5! h-3.5!"
 			/>
 
 			{/* Header with avatar and username */}
