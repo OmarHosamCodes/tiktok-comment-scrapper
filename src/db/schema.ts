@@ -25,6 +25,9 @@ export const boardComments = pgTable("board_comments", {
 	boardId: uuid("board_id")
 		.references(() => boards.id, { onDelete: "cascade" })
 		.notNull(),
+	groupId: uuid("group_id").references(() => boardGroups.id, {
+		onDelete: "set null",
+	}), // Group membership
 	// TikTok comment data
 	commentId: varchar("comment_id", { length: 50 }).notNull(),
 	parentCommentId: varchar("parent_comment_id", { length: 50 }), // For replies

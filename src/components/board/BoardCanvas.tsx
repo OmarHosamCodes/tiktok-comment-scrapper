@@ -1,21 +1,23 @@
 import {
 	Background,
 	BackgroundVariant,
-	type EdgeChange,
 	MarkerType,
 	MiniMap,
+	ReactFlow,
+	addEdge,
+	type Connection,
+	type EdgeChange,
 	type NodeChange,
 	type NodePositionChange,
 	type OnSelectionChangeFunc,
-	ReactFlow,
 } from "@xyflow/react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useState } from "react";
 import {
-	type BoardNode,
-	type GroupNodeData,
 	useBoardHistory,
 	useBoardStore,
+	type BoardNode,
+	type GroupNodeData,
 } from "../../stores/board-store";
 import { BoardToolbar } from "./BoardToolbar";
 import { CommentNode } from "./CommentNode";
@@ -128,10 +130,16 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 						positionX: number;
 						positionY: number;
 						color?: string;
+						groupId?: string;
 					}) => ({
 						id: comment.id,
 						type: "comment",
 						position: { x: comment.positionX, y: comment.positionY },
+						// If comment belongs to a group, set parentId for React Flow parent-child relationship
+						...(comment.groupId && {
+							parentId: comment.groupId,
+							extent: "parent" as const,
+						}),
 						data: {
 							dbId: comment.id,
 							commentId: comment.commentId,
@@ -288,6 +296,43 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 		[setSelectedNodes],
 	);
 
+	// Handle new edge connections
+	const handleConnect = useCallback(
+		(connection: Connection) => {
+			if (!connection.source || !connection.target) return;
+
+			// Only allow connections between comment nodes
+			const sourceNode = nodes.find((n) => n.id === connection.source);
+			const targetNode = nodes.find((n) => n.id === connection.target);
+			if (!sourceNode || !targetNode) return;
+			if (sourceNode.type !== "comment" || targetNode.type !== "comment")
+				return;
+
+			// Create new edge
+			const newEdge = {
+				id: nanoid(),
+				source: connection.source,
+				target: connection.target,
+				type: "reply",
+			};
+
+			setEdges(addEdge(newEdge, edges as (typeof newEdge)[]));
+
+			// Persist to server
+			if (slug && sourceNode.data.dbId && targetNode.data.dbId) {
+				fetch(`/api/boards/${slug}/edges`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						sourceCommentId: sourceNode.data.commentId,
+						targetCommentId: targetNode.data.commentId,
+					}),
+				}).catch(console.error);
+			}
+		},
+		[nodes, edges, setEdges, slug],
+	);
+
 	// Create a new group
 	const handleCreateGroup = useCallback(() => {
 		const newGroup = {
@@ -380,9 +425,12 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 				onNodesChange={handleNodesChange}
 				onEdgesChange={handleEdgesChange}
 				onSelectionChange={handleSelectionChange}
+				onConnect={handleConnect}
 				nodeTypes={nodeTypes}
 				edgeTypes={edgeTypes}
 				defaultEdgeOptions={defaultEdgeOptions}
+				selectionKeyCode="Shift"
+				multiSelectionKeyCode="Shift"
 				fitView
 				fitViewOptions={{ padding: 0.2 }}
 				minZoom={0.1}

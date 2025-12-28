@@ -1,13 +1,14 @@
 import { useReactFlow } from "@xyflow/react";
 import {
 	Copy,
+	Edit2,
 	Folder,
 	FolderMinus,
 	FolderPlus,
 	Palette,
 	Trash2,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BoardNode, GroupNodeData } from "../../stores/board-store";
 import { useBoardStore } from "../../stores/board-store";
 
@@ -45,6 +46,10 @@ export function ContextMenu({
 }: ContextMenuProps) {
 	const menuRef = useRef<HTMLDivElement>(null);
 	const [showColorPicker, setShowColorPicker] = useState(false);
+	const [showGroupSubmenu, setShowGroupSubmenu] = useState(false);
+	const [isRenaming, setIsRenaming] = useState(false);
+	const [renameValue, setRenameValue] = useState("");
+	const renameInputRef = useRef<HTMLInputElement>(null);
 	const { getNode } = useReactFlow();
 	const { nodes, setNodes, selectedNodes, updateNodeData, updateGroup } =
 		useBoardStore();
@@ -54,8 +59,11 @@ export function ContextMenu({
 	const isComment = node?.type === "comment";
 	const hasParent = node?.parentId !== undefined;
 
-	// Get available groups to add comment to
-	const availableGroups = nodes.filter((n) => n.type === "group");
+	// Get available groups to add comment to - memoized
+	const availableGroups = useMemo(
+		() => nodes.filter((n) => n.type === "group"),
+		[nodes],
+	);
 
 	// Close menu on click outside
 	useEffect(() => {
@@ -88,14 +96,17 @@ export function ContextMenu({
 			const groupNode = nodes.find((n) => n.id === groupId);
 			if (!groupNode) return;
 
+			const currentNode = nodes.find((n) => n.id === nodeId);
+			if (!currentNode) return;
+
+			// Calculate position relative to group
+			const relativeX = currentNode.position.x - groupNode.position.x;
+			const relativeY = currentNode.position.y - groupNode.position.y;
+
 			// Update node with parent ID
 			setNodes(
 				nodes.map((n) => {
 					if (n.id === nodeId) {
-						// Calculate position relative to group
-						const relativeX = n.position.x - groupNode.position.x;
-						const relativeY = n.position.y - groupNode.position.y;
-
 						return {
 							...n,
 							parentId: groupId,
@@ -110,9 +121,23 @@ export function ContextMenu({
 				}) as BoardNode[],
 			);
 
+			// Persist to server - update position and groupId
+			if (slug && currentNode.data.dbId) {
+				const groupDbId = (groupNode.data as GroupNodeData).dbId;
+				fetch(`/api/boards/${slug}/comments/${currentNode.data.dbId}`, {
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						positionX: Math.max(20, relativeX),
+						positionY: Math.max(40, relativeY),
+						groupId: groupDbId,
+					}),
+				}).catch(console.error);
+			}
+
 			onClose();
 		},
-		[nodeId, nodes, setNodes, onClose],
+		[nodeId, nodes, setNodes, onClose, slug],
 	);
 
 	// Handle removing comment from group
@@ -198,15 +223,78 @@ export function ContextMenu({
 		onClose();
 	}, [selectedNodes, onCreateGroup, onClose]);
 
+	// Handle rename group
+	const handleStartRename = useCallback(() => {
+		if (!node || !isGroup) return;
+		setRenameValue((node.data as GroupNodeData).label || "");
+		setIsRenaming(true);
+		setTimeout(() => renameInputRef.current?.focus(), 50);
+	}, [node, isGroup]);
+
+	const handleRenameSubmit = useCallback(() => {
+		if (!nodeId || !isGroup || !renameValue.trim()) {
+			setIsRenaming(false);
+			return;
+		}
+
+		updateGroup(nodeId, { label: renameValue.trim() });
+
+		// Sync to server
+		if (slug && (node?.data as GroupNodeData).dbId) {
+			fetch(
+				`/api/boards/${slug}/groups/${(node?.data as GroupNodeData).dbId}`,
+				{
+					method: "PATCH",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ label: renameValue.trim() }),
+				},
+			).catch(console.error);
+		}
+
+		setIsRenaming(false);
+		onClose();
+	}, [nodeId, isGroup, renameValue, updateGroup, slug, node?.data, onClose]);
+
+	// Stop event propagation to prevent React Flow from interfering
+	const handleMenuClick = useCallback((e: React.MouseEvent) => {
+		e.stopPropagation();
+	}, []);
+
 	return (
 		<div
 			ref={menuRef}
-			className="fixed z-50 min-w-[180px] bg-card border border-border rounded-lg shadow-xl overflow-hidden animate-in fade-in-0 zoom-in-95 duration-150"
+			role="menu"
+			tabIndex={-1}
+			className="fixed z-50 min-w-[180px] bg-card border border-border rounded-lg shadow-xl overflow-hidden animate-in fade-in-0 zoom-in-95 duration-100"
 			style={{
-				left: x,
-				top: y,
+				left: Math.min(x, window.innerWidth - 220),
+				top: Math.min(y, window.innerHeight - 300),
 			}}
+			onClick={handleMenuClick}
+			onKeyDown={(e) => {
+				if (e.key === "Escape") onClose();
+			}}
+			onContextMenu={(e) => e.preventDefault()}
 		>
+			{/* Rename input for groups */}
+			{isRenaming && (
+				<div className="p-2 border-b border-border">
+					<input
+						ref={renameInputRef}
+						type="text"
+						value={renameValue}
+						onChange={(e) => setRenameValue(e.target.value)}
+						onKeyDown={(e) => {
+							if (e.key === "Enter") handleRenameSubmit();
+							if (e.key === "Escape") setIsRenaming(false);
+						}}
+						onBlur={handleRenameSubmit}
+						className="w-full px-2 py-1 text-sm bg-background border border-border rounded focus:outline-none focus:ring-2 focus:ring-primary"
+						placeholder="Group name..."
+					/>
+				</div>
+			)}
+
 			{/* Node-specific actions */}
 			{node && (
 				<>
@@ -236,37 +324,56 @@ export function ContextMenu({
 						)}
 					</div>
 
+					{/* Rename group */}
+					{isGroup && !isRenaming && (
+						<button
+							type="button"
+							onClick={handleStartRename}
+							className="w-full flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
+						>
+							<Edit2 className="w-4 h-4" />
+							<span>Rename Group</span>
+						</button>
+					)}
+
 					{/* Add to group (for comments not in a group) */}
 					{isComment && !hasParent && availableGroups.length > 0 && (
-						<div className="relative group">
+						<div className="relative">
 							<button
 								type="button"
+								onClick={() => setShowGroupSubmenu(!showGroupSubmenu)}
 								className="w-full flex items-center gap-3 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
 							>
 								<FolderPlus className="w-4 h-4" />
 								<span>Add to Group</span>
+								<span className="ml-auto text-muted-foreground">▶</span>
 							</button>
 
-							<div className="absolute left-full top-0 ml-1 min-w-[150px] bg-card border border-border rounded-lg shadow-xl hidden group-hover:block">
-								{availableGroups.map((group) => (
-									<button
-										key={group.id}
-										type="button"
-										onClick={() => handleAddToGroup(group.id)}
-										className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
-									>
-										<div
-											className="w-3 h-3 rounded-sm"
-											style={{
-												backgroundColor: (group.data as GroupNodeData).color,
-											}}
-										/>
-										<span className="truncate">
-											{(group.data as GroupNodeData).label}
-										</span>
-									</button>
-								))}
-							</div>
+							{showGroupSubmenu && (
+								<div
+									className="absolute left-full top-0 ml-1 min-w-[150px] bg-card border border-border rounded-lg shadow-xl"
+									style={{ maxHeight: 200, overflowY: "auto" }}
+								>
+									{availableGroups.map((group) => (
+										<button
+											key={group.id}
+											type="button"
+											onClick={() => handleAddToGroup(group.id)}
+											className="w-full flex items-center gap-2 px-3 py-2 text-sm hover:bg-muted transition-colors text-left"
+										>
+											<div
+												className="w-3 h-3 rounded-sm shrink-0"
+												style={{
+													backgroundColor: (group.data as GroupNodeData).color,
+												}}
+											/>
+											<span className="truncate">
+												{(group.data as GroupNodeData).label || "Untitled"}
+											</span>
+										</button>
+									))}
+								</div>
+							)}
 						</div>
 					)}
 

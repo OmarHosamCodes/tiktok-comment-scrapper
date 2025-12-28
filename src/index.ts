@@ -4,12 +4,12 @@ import { eq } from "drizzle-orm";
 import { nanoid } from "nanoid";
 import { db } from "./db/client";
 import {
-	type NewBoardComment,
-	type NewBoardEdge,
 	boardComments,
 	boardEdges,
 	boardGroups,
 	boards,
+	type NewBoardComment,
+	type NewBoardEdge,
 } from "./db/schema";
 import homepage from "./index.html";
 import { TiktokComment } from "./scraper";
@@ -564,6 +564,7 @@ const server = serve({
 						height?: number;
 						color?: string;
 						zIndex?: number;
+						groupId?: string | null;
 					};
 
 					const [board] = await db
@@ -589,6 +590,7 @@ const server = serve({
 							...(body.height !== undefined && { height: body.height }),
 							...(body.color !== undefined && { color: body.color }),
 							...(body.zIndex !== undefined && { zIndex: body.zIndex }),
+							...(body.groupId !== undefined && { groupId: body.groupId }),
 						})
 						.where(eq(boardComments.id, commentId));
 
@@ -780,6 +782,64 @@ const server = serve({
 			},
 		},
 
+		// Edges management
+		"/api/boards/:slug/edges": {
+			async POST(req) {
+				try {
+					const slug = req.params.slug;
+					const body = (await req.json()) as {
+						sourceCommentId: string;
+						targetCommentId: string;
+						edgeType?: string;
+					};
+
+					const [board] = await db
+						.select()
+						.from(boards)
+						.where(eq(boards.publicSlug, slug))
+						.limit(1);
+
+					if (!board) {
+						return Response.json({ error: "Board not found" }, { status: 404 });
+					}
+
+					const [edge] = await db
+						.insert(boardEdges)
+						.values({
+							boardId: board.id,
+							sourceCommentId: body.sourceCommentId,
+							targetCommentId: body.targetCommentId,
+							edgeType: body.edgeType || "reply",
+						})
+						.returning();
+
+					return Response.json(edge);
+				} catch (error) {
+					console.error("Create edge error:", error);
+					return Response.json(
+						{ error: "Failed to create edge" },
+						{ status: 500 },
+					);
+				}
+			},
+
+			async DELETE(req) {
+				try {
+					const { edgeId } = (await req.json()) as { edgeId: string };
+
+					await db.delete(boardEdges).where(eq(boardEdges.id, edgeId));
+
+					return Response.json({ success: true });
+				} catch (error) {
+					console.error("Delete edge error:", error);
+					return Response.json(
+						{ error: "Failed to delete edge" },
+						{ status: 500 },
+					);
+				}
+			},
+		},
+
 		// Generate ZIP with comment images
 		"/api/generate-zip": {
 			async POST(req) {
@@ -900,64 +960,53 @@ function generateCommentSvg(comment: CommentData, isReply = false): string {
   <rect width="${width}" height="${height}" fill="${bgColor}" rx="16"/>
   
   <!-- Gradient Border -->
-  <rect x="2" y="2" width="${width - 4}" height="${
-		height - 4
-	}" fill="none" stroke="url(#${gradientId})" stroke-width="2" rx="14"/>
+  <rect x="2" y="2" width="${width - 4}" height="${height - 4
+		}" fill="none" stroke="url(#${gradientId})" stroke-width="2" rx="14"/>
   
   <!-- Avatar placeholder circle -->
-  <circle cx="${padding + avatarSize / 2}" cy="${
-		padding + avatarSize / 2
-	}" r="${avatarSize / 2}" fill="#374151"/>
-  <text x="${padding + avatarSize / 2}" y="${
-		padding + avatarSize / 2 + 6
-	}" text-anchor="middle" fill="#9ca3af" font-size="20" font-family="Inter, sans-serif">${escapeXml(
-		comment.nickname.charAt(0).toUpperCase(),
-	)}</text>
+  <circle cx="${padding + avatarSize / 2}" cy="${padding + avatarSize / 2
+		}" r="${avatarSize / 2}" fill="#374151"/>
+  <text x="${padding + avatarSize / 2}" y="${padding + avatarSize / 2 + 6
+		}" text-anchor="middle" fill="#9ca3af" font-size="20" font-family="Inter, sans-serif">${escapeXml(
+			comment.nickname.charAt(0).toUpperCase(),
+		)}</text>
   
   <!-- Username -->
-  <text x="${padding + avatarSize + 16}" y="${
-		padding + 20
-	}" fill="#ffffff" font-size="16" font-weight="600" font-family="Inter, sans-serif">${escapeXml(
-		comment.nickname,
-	)}</text>
-  <text x="${padding + avatarSize + 16}" y="${
-		padding + 40
-	}" fill="#64748b" font-size="12" font-family="Inter, sans-serif">@${escapeXml(
-		comment.username,
-	)}</text>
+  <text x="${padding + avatarSize + 16}" y="${padding + 20
+		}" fill="#ffffff" font-size="16" font-weight="600" font-family="Inter, sans-serif">${escapeXml(
+			comment.nickname,
+		)}</text>
+  <text x="${padding + avatarSize + 16}" y="${padding + 40
+		}" fill="#64748b" font-size="12" font-family="Inter, sans-serif">@${escapeXml(
+			comment.username,
+		)}</text>
   
   <!-- Comment text -->
   ${lines
-		.map(
-			(line, i) =>
-				`<text x="${padding + avatarSize + 16}" y="${
-					padding + 70 + i * lineHeight
-				}" fill="#e2e8f0" font-size="14" font-family="Inter, sans-serif">${escapeXml(
-					line,
-				)}</text>`,
-		)
-		.join("\n  ")}
+			.map(
+				(line, i) =>
+					`<text x="${padding + avatarSize + 16}" y="${padding + 70 + i * lineHeight
+					}" fill="#e2e8f0" font-size="14" font-family="Inter, sans-serif">${escapeXml(
+						line,
+					)}</text>`,
+			)
+			.join("\n  ")}
   
   <!-- Timestamp -->
-  <text x="${padding + avatarSize + 16}" y="${
-		height - padding
-	}" fill="#64748b" font-size="11" font-family="Inter, sans-serif">${escapeXml(
-		comment.create_time,
-	)}</text>
+  <text x="${padding + avatarSize + 16}" y="${height - padding
+		}" fill="#64748b" font-size="11" font-family="Inter, sans-serif">${escapeXml(
+			comment.create_time,
+		)}</text>
   
   <!-- Reply count badge -->
-  ${
-		comment.total_reply > 0
-			? `<rect x="${width - 100}" y="${
-					height - 36
-			  }" width="80" height="24" fill="${borderColor}" rx="12" opacity="0.2"/>
-  <text x="${width - 60}" y="${
-					height - 20
-			  }" text-anchor="middle" fill="${borderColor}" font-size="11" font-weight="500" font-family="Inter, sans-serif">${
-					comment.total_reply
-			  } replies</text>`
+  ${comment.total_reply > 0
+			? `<rect x="${width - 100}" y="${height - 36
+			}" width="80" height="24" fill="${borderColor}" rx="12" opacity="0.2"/>
+  <text x="${width - 60}" y="${height - 20
+			}" text-anchor="middle" fill="${borderColor}" font-size="11" font-weight="500" font-family="Inter, sans-serif">${comment.total_reply
+			} replies</text>`
 			: ""
-	}
+		}
 </svg>`;
 }
 

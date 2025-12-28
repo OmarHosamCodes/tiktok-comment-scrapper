@@ -36,7 +36,7 @@ import { Input } from "./components/ui/input";
 import { ScrollArea } from "./components/ui/scroll-area";
 import { Separator } from "./components/ui/separator";
 import { PngExportOptions } from "./constants/png-options";
-import { type Comment, useScraper } from "./hooks/use-scraper";
+import { useScraper, type Comment } from "./hooks/use-scraper";
 
 type FilterType = "all" | "comments" | "replies";
 type SortType = "newest" | "oldest" | "most_replies";
@@ -65,7 +65,11 @@ export function App({ navigateToBoard }: AppProps) {
 		for (const comment of result.comments) {
 			flat.push(comment);
 			for (const reply of comment.replies) {
-				flat.push(reply);
+				// Set parent_comment_id on reply since it's determined by nesting
+				flat.push({
+					...reply,
+					parent_comment_id: comment.comment_id,
+				});
 			}
 		}
 		return flat;
