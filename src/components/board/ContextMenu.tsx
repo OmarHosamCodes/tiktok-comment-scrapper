@@ -18,6 +18,7 @@ interface ContextMenuProps {
 	nodeId?: string;
 	onClose: () => void;
 	onCreateGroup: () => void;
+	onGroupSelected: () => void;
 	onDeleteSelected: () => void;
 	slug: string;
 }
@@ -41,6 +42,7 @@ export function ContextMenu({
 	nodeId,
 	onClose,
 	onCreateGroup,
+	onGroupSelected,
 	onDeleteSelected,
 	slug,
 }: ContextMenuProps) {
@@ -173,26 +175,28 @@ export function ContextMenu({
 		(color: string) => {
 			if (!nodeId || !node) return;
 
+			// Get the current node from store to get the latest dbId
+			const currentNodes = useBoardStore.getState().nodes;
+			const currentNode = currentNodes.find((n) => n.id === nodeId);
+			const dbId = currentNode ? currentNode.data.dbId : "";
+
 			if (isGroup) {
 				updateGroup(nodeId, { color });
 
 				// Sync to server
-				if (slug && (node.data as GroupNodeData).dbId) {
-					fetch(
-						`/api/boards/${slug}/groups/${(node.data as GroupNodeData).dbId}`,
-						{
-							method: "PATCH",
-							headers: { "Content-Type": "application/json" },
-							body: JSON.stringify({ color }),
-						},
-					).catch(console.error);
+				if (slug && dbId) {
+					fetch(`/api/boards/${slug}/groups/${dbId}`, {
+						method: "PATCH",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ color }),
+					}).catch(console.error);
 				}
 			} else if (isComment) {
 				updateNodeData(nodeId, { color });
 
 				// Sync to server
-				if (slug && node.data.dbId) {
-					fetch(`/api/boards/${slug}/comments/${node.data.dbId}`, {
+				if (slug && dbId) {
+					fetch(`/api/boards/${slug}/comments/${dbId}`, {
 						method: "PATCH",
 						headers: { "Content-Type": "application/json" },
 						body: JSON.stringify({ color }),
@@ -219,9 +223,9 @@ export function ContextMenu({
 	const handleGroupSelected = useCallback(() => {
 		if (selectedNodes.length < 2) return;
 
-		onCreateGroup();
+		onGroupSelected();
 		onClose();
-	}, [selectedNodes, onCreateGroup, onClose]);
+	}, [selectedNodes, onGroupSelected, onClose]);
 
 	// Handle rename group
 	const handleStartRename = useCallback(() => {
@@ -239,21 +243,23 @@ export function ContextMenu({
 
 		updateGroup(nodeId, { label: renameValue.trim() });
 
+		// Get the current node from store to get the latest dbId
+		const currentNodes = useBoardStore.getState().nodes;
+		const currentNode = currentNodes.find((n) => n.id === nodeId);
+		const dbId = currentNode ? (currentNode.data as GroupNodeData).dbId : "";
+
 		// Sync to server
-		if (slug && (node?.data as GroupNodeData).dbId) {
-			fetch(
-				`/api/boards/${slug}/groups/${(node?.data as GroupNodeData).dbId}`,
-				{
-					method: "PATCH",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ label: renameValue.trim() }),
-				},
-			).catch(console.error);
+		if (slug && dbId) {
+			fetch(`/api/boards/${slug}/groups/${dbId}`, {
+				method: "PATCH",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ label: renameValue.trim() }),
+			}).catch(console.error);
 		}
 
 		setIsRenaming(false);
 		onClose();
-	}, [nodeId, isGroup, renameValue, updateGroup, slug, node?.data, onClose]);
+	}, [nodeId, isGroup, renameValue, updateGroup, slug, onClose]);
 
 	// Stop event propagation to prevent React Flow from interfering
 	const handleMenuClick = useCallback((e: React.MouseEvent) => {
@@ -265,7 +271,7 @@ export function ContextMenu({
 			ref={menuRef}
 			role="menu"
 			tabIndex={-1}
-			className="fixed z-50 min-w-[180px] bg-card border border-border rounded-lg shadow-xl overflow-hidden animate-in fade-in-0 zoom-in-95 duration-100"
+			className="fixed z-50 min-w-[180px] bg-card border border-border rounded-lg shadow-xl animate-in fade-in-0 zoom-in-95 duration-100"
 			style={{
 				left: Math.min(x, window.innerWidth - 220),
 				top: Math.min(y, window.innerHeight - 300),

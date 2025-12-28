@@ -62,7 +62,6 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 		onNodesChange,
 		onEdgesChange,
 		setSelectedNodes,
-		addGroup,
 	} = useBoardStore();
 
 	const { undo, redo } = useBoardHistory();
@@ -333,67 +332,212 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 		[nodes, edges, setEdges, slug],
 	);
 
-	// Create a new group
-	const handleCreateGroup = useCallback(() => {
-		const newGroup = {
-			id: nanoid(),
-			type: "group" as const,
-			position: { x: 100, y: 100 },
-			style: { width: 400, height: 300 },
-			data: {
-				dbId: "",
-				label: "New Group",
-				color: "var(--primary)",
-			},
-			zIndex: -1,
-		};
+	// Create a new group (optionally grouping selected nodes)
+	const handleCreateGroup = useCallback(
+		(groupSelectedNodes = false) => {
+			const currentNodes = useBoardStore.getState().nodes;
+			const currentSelectedNodes = useBoardStore.getState().selectedNodes;
 
-		addGroup(newGroup);
+			// Default position and size
+			let position = { x: 100, y: 100 };
+			let width = 400;
+			let height = 300;
+			const padding = 40;
 
-		// Create group on server
-		if (slug) {
-			fetch(`/api/boards/${slug}/groups`, {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					label: newGroup.data.label,
-					positionX: newGroup.position.x,
-					positionY: newGroup.position.y,
-					width: 400,
-					height: 300,
-					color: newGroup.data.color,
-				}),
-			})
-				.then((res) => res.json())
-				.then((data) => {
-					// Update node with server ID
-					useBoardStore.getState().updateGroup(newGroup.id, { dbId: data.id });
+			// Get the selected comment nodes to add to the group
+			const selectedCommentNodes = groupSelectedNodes
+				? currentNodes.filter(
+						(n) => currentSelectedNodes.includes(n.id) && n.type === "comment",
+					)
+				: [];
+
+			// If grouping selected nodes, calculate bounding box
+			if (selectedCommentNodes.length > 0) {
+				const nodeWidth = 280; // CommentNode width
+				const nodeHeight = 160; // Approximate CommentNode height
+
+				const minX = Math.min(...selectedCommentNodes.map((n) => n.position.x));
+				const minY = Math.min(...selectedCommentNodes.map((n) => n.position.y));
+				const maxX = Math.max(
+					...selectedCommentNodes.map((n) => n.position.x + nodeWidth),
+				);
+				const maxY = Math.max(
+					...selectedCommentNodes.map((n) => n.position.y + nodeHeight),
+				);
+
+				position = {
+					x: minX - padding,
+					y: minY - padding - 20, // Extra space for group header
+				};
+				width = maxX - minX + padding * 2;
+				height = maxY - minY + padding * 2 + 20; // Extra space for group header
+			}
+
+			const groupId = nanoid();
+			const newGroup: BoardNode = {
+				id: groupId,
+				type: "group",
+				position,
+				style: { width, height },
+				data: {
+					dbId: "",
+					label: "New Group",
+					color: "#6366f1", // Default indigo color
+				},
+				zIndex: -1,
+			};
+
+			// Optimistic update: Add group and move children immediately
+			const updatedNodes = [...currentNodes, newGroup];
+
+			if (selectedCommentNodes.length > 0) {
+				// Update nodes to be children of the new group
+				const finalNodes = updatedNodes.map((n) => {
+					if (
+						selectedCommentNodes.some((s) => s.id === n.id) &&
+						n.type === "comment"
+					) {
+						// Calculate relative position within the group
+						const relativeX = n.position.x - position.x;
+						const relativeY = n.position.y - position.y;
+
+						return {
+							...n,
+							parentId: groupId,
+							position: {
+								x: Math.max(20, relativeX),
+								y: Math.max(40, relativeY),
+							},
+							extent: "parent" as const,
+						};
+					}
+					return n;
+				}) as BoardNode[];
+
+				setNodes(finalNodes);
+			} else {
+				setNodes(updatedNodes);
+			}
+
+			// Create group on server
+			if (slug) {
+				fetch(`/api/boards/${slug}/groups`, {
+					method: "POST",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({
+						label: newGroup.data.label,
+						positionX: position.x,
+						positionY: position.y,
+						width,
+						height,
+						color: newGroup.data.color,
+					}),
 				})
-				.catch(console.error);
-		}
-	}, [slug, addGroup]);
+					.then((res) => res.json())
+					.then((data) => {
+						// Update node with server ID
+						useBoardStore.getState().updateGroup(groupId, { dbId: data.id });
+
+						// If grouping selected nodes, persist the relationship to server
+						if (selectedCommentNodes.length > 0) {
+							for (const commentNode of selectedCommentNodes) {
+								const relativeX = commentNode.position.x - position.x;
+								const relativeY = commentNode.position.y - position.y;
+
+								fetch(`/api/boards/${slug}/comments/${commentNode.data.dbId}`, {
+									method: "PATCH",
+									headers: { "Content-Type": "application/json" },
+									body: JSON.stringify({
+										positionX: Math.max(20, relativeX),
+										positionY: Math.max(40, relativeY),
+										groupId: data.id,
+									}),
+								}).catch(console.error);
+							}
+						}
+					})
+					.catch(console.error);
+			}
+		},
+		[slug, setNodes],
+	);
 
 	// Delete selected nodes
 	const handleDeleteSelected = useCallback(() => {
-		const { selectedNodes, nodes, removeNode } = useBoardStore.getState();
+		const { selectedNodes, nodes, setNodes } = useBoardStore.getState();
 
+		// Identify groups to be deleted
+		const groupsToDelete = nodes.filter(
+			(n) => selectedNodes.includes(n.id) && n.type === "group",
+		);
+		const groupIdsToDelete = groupsToDelete.map((g) => g.id);
+
+		// Handle orphan rescue: if a group is deleted, detach its children
+		let nextNodes = nodes;
+
+		if (groupIdsToDelete.length > 0) {
+			nextNodes = nextNodes.map((n) => {
+				if (n.parentId && groupIdsToDelete.includes(n.parentId)) {
+					// Find parent group to calculate absolute position
+					const parentGroup = groupsToDelete.find((g) => g.id === n.parentId);
+					const parentX = parentGroup?.position.x || 0;
+					const parentY = parentGroup?.position.y || 0;
+
+					return {
+						...n,
+						parentId: undefined,
+						extent: undefined,
+						position: {
+							x: parentX + n.position.x,
+							y: parentY + n.position.y,
+						},
+					};
+				}
+				return n;
+			});
+
+			// Sync detached children to server
+			const detachedNodes = nextNodes.filter((n) => {
+				const oldNode = nodes.find((old) => old.id === n.id);
+				return (
+					n.parentId === undefined &&
+					oldNode?.parentId &&
+					groupIdsToDelete.includes(oldNode.parentId)
+				);
+			});
+
+			detachedNodes.forEach((node) => {
+				if (slug && node.data.dbId) {
+					fetch(`/api/boards/${slug}/comments/${node.data.dbId}`, {
+						method: "PATCH",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							groupId: null,
+							positionX: node.position.x,
+							positionY: node.position.y,
+						}),
+					}).catch(console.error);
+				}
+			});
+		}
+
+		// Remove selected nodes
+		nextNodes = nextNodes.filter((n) => !selectedNodes.includes(n.id));
+		setNodes(nextNodes);
+
+		// Delete from server
 		for (const nodeId of selectedNodes) {
 			const node = nodes.find((n) => n.id === nodeId);
-			if (!node) continue;
+			if (!node || !slug || !node.data.dbId) continue;
 
-			removeNode(nodeId);
+			const endpoint =
+				node.type === "group"
+					? `/api/boards/${slug}/groups/${node.data.dbId}`
+					: `/api/boards/${slug}/comments/${node.data.dbId}`;
 
-			// Delete from server
-			if (slug && node.data.dbId) {
-				const endpoint =
-					node.type === "group"
-						? `/api/boards/${slug}/groups/${node.data.dbId}`
-						: `/api/boards/${slug}/comments/${node.data.dbId}`;
-
-				fetch(endpoint, { method: "DELETE" }).catch(console.error);
-			}
+			fetch(endpoint, { method: "DELETE" }).catch(console.error);
 		}
-	}, [slug]);
+	}, [slug, setNodes]);
 
 	if (isLoading) {
 		return (
@@ -456,7 +600,7 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 					maskColor="hsl(var(--background) / 0.8)"
 				/>
 				<BoardToolbar
-					onCreateGroup={handleCreateGroup}
+					onCreateGroup={() => handleCreateGroup(false)}
 					onDeleteSelected={handleDeleteSelected}
 				/>
 			</ReactFlow>
@@ -468,7 +612,8 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 					y={contextMenu.y}
 					nodeId={contextMenu.nodeId}
 					onClose={handleCloseContextMenu}
-					onCreateGroup={handleCreateGroup}
+					onCreateGroup={() => handleCreateGroup(false)}
+					onGroupSelected={() => handleCreateGroup(true)}
 					onDeleteSelected={handleDeleteSelected}
 					slug={slug}
 				/>
