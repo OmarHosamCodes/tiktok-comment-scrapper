@@ -8,7 +8,6 @@ import {
 	type Connection,
 	type EdgeChange,
 	type NodeChange,
-	type NodePositionChange,
 	type OnSelectionChangeFunc,
 } from "@xyflow/react";
 import { nanoid } from "nanoid";
@@ -241,29 +240,40 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 			// Type cast needed due to React Flow v12 strict generics
 			onNodesChange(changes as NodeChange<BoardNode>[]);
 
-			// Debounce position updates to server
-			const positionChanges = changes.filter(
-				(change): change is NodePositionChange =>
-					change.type === "position" &&
-					"dragging" in change &&
-					change.dragging === false,
+			// Debounce position and dimension updates to server
+			const changesToSync = changes.filter(
+				(change) =>
+					(change.type === "position" &&
+						"dragging" in change &&
+						change.dragging === false) ||
+					(change.type === "dimensions" &&
+						"resizing" in change &&
+						change.resizing === false),
 			);
 
-			if (positionChanges.length > 0) {
-				// Sync positions to server
-				const updates = positionChanges
+			if (changesToSync.length > 0) {
+				// Sync updates to server
+				const updates = changesToSync
 					.map((change) => {
-						if (change.position) {
-							const node = nodes.find((n) => n.id === change.id);
-							if (node) {
-								return {
-									id: node.data.dbId,
-									positionX: change.position.x,
-									positionY: change.position.y,
-								};
-							}
+						const node = nodes.find((n) => n.id === change.id);
+						if (!node) return null;
+
+						const update: any = {
+							id: node.data.dbId,
+							type: node.type,
+						};
+
+						if (change.type === "position" && change.position) {
+							update.positionX = change.position.x;
+							update.positionY = change.position.y;
 						}
-						return null;
+
+						if (change.type === "dimensions" && change.dimensions) {
+							update.width = change.dimensions.width;
+							update.height = change.dimensions.height;
+						}
+
+						return update;
 					})
 					.filter(Boolean);
 

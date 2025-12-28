@@ -629,6 +629,7 @@ const server = serve({
 					const body = (await req.json()) as {
 						updates: Array<{
 							id: string;
+							type?: string;
 							positionX?: number;
 							positionY?: number;
 							width?: number;
@@ -648,23 +649,40 @@ const server = serve({
 						return Response.json({ error: "Board not found" }, { status: 404 });
 					}
 
-					// Update each comment
+					// Update each item
 					for (const update of body.updates) {
-						await db
-							.update(boardComments)
-							.set({
-								...(update.positionX !== undefined && {
-									positionX: update.positionX,
-								}),
-								...(update.positionY !== undefined && {
-									positionY: update.positionY,
-								}),
-								...(update.width !== undefined && { width: update.width }),
-								...(update.height !== undefined && { height: update.height }),
-								...(update.color !== undefined && { color: update.color }),
-								...(update.zIndex !== undefined && { zIndex: update.zIndex }),
-							})
-							.where(eq(boardComments.id, update.id));
+						if (update.type === "group") {
+							await db
+								.update(boardGroups)
+								.set({
+									...(update.positionX !== undefined && {
+										positionX: update.positionX,
+									}),
+									...(update.positionY !== undefined && {
+										positionY: update.positionY,
+									}),
+									...(update.width !== undefined && { width: update.width }),
+									...(update.height !== undefined && { height: update.height }),
+									...(update.color !== undefined && { color: update.color }),
+								})
+								.where(eq(boardGroups.id, update.id));
+						} else {
+							await db
+								.update(boardComments)
+								.set({
+									...(update.positionX !== undefined && {
+										positionX: update.positionX,
+									}),
+									...(update.positionY !== undefined && {
+										positionY: update.positionY,
+									}),
+									...(update.width !== undefined && { width: update.width }),
+									...(update.height !== undefined && { height: update.height }),
+									...(update.color !== undefined && { color: update.color }),
+									...(update.zIndex !== undefined && { zIndex: update.zIndex }),
+								})
+								.where(eq(boardComments.id, update.id));
+						}
 					}
 
 					return Response.json({ success: true, updated: body.updates.length });
