@@ -1,21 +1,31 @@
-import { PngExportOptions } from "@/constants/png-options";
 import { useReactFlow } from "@xyflow/react";
 import { toPng } from "html-to-image";
 import { jsPDF } from "jspdf";
 import {
+	Circle,
+	Diamond,
 	FileJson,
 	FileText,
 	Group,
+	Hand,
 	Image,
 	Maximize,
+	MousePointer2,
 	Redo2,
+	Square,
 	Trash2,
+	Type,
 	Undo2,
 	ZoomIn,
 	ZoomOut,
 } from "lucide-react";
 import { useCallback } from "react";
-import { useBoardHistory, useBoardStore } from "../../stores/board-store";
+import { PngExportOptions } from "@/constants/png-options";
+import {
+	type InteractionMode,
+	useBoardHistory,
+	useBoardStore,
+} from "../../stores/board-store";
 import { Button } from "../ui/button";
 
 interface BoardToolbarProps {
@@ -29,7 +39,47 @@ export function BoardToolbar({
 }: BoardToolbarProps) {
 	const { zoomIn, zoomOut, fitView, getNodes } = useReactFlow();
 	const { undo, redo, canUndo, canRedo } = useBoardHistory();
-	const { board, selectedNodes } = useBoardStore();
+	const {
+		board,
+		selectedNodes,
+		interactionMode,
+		setInteractionMode,
+		pendingShapeType,
+		setPendingShapeType,
+	} = useBoardStore();
+
+	const handleModeChange = useCallback(
+		(mode: InteractionMode) => {
+			setInteractionMode(mode);
+			if (mode !== "shape") {
+				setPendingShapeType(null);
+			}
+		},
+		[setInteractionMode, setPendingShapeType],
+	);
+
+	const handleShapeClick = useCallback(
+		(shapeType: "rectangle" | "circle" | "diamond") => {
+			if (pendingShapeType === shapeType) {
+				// Toggle off
+				setPendingShapeType(null);
+				setInteractionMode("select");
+			} else {
+				setPendingShapeType(shapeType);
+				setInteractionMode("shape");
+			}
+		},
+		[pendingShapeType, setPendingShapeType, setInteractionMode],
+	);
+
+	const handleTextClick = useCallback(() => {
+		if (interactionMode === "text") {
+			setInteractionMode("select");
+		} else {
+			setInteractionMode("text");
+			setPendingShapeType(null);
+		}
+	}, [interactionMode, setInteractionMode, setPendingShapeType]);
 
 	// Export as PNG
 	const handleExportPng = useCallback(async () => {
@@ -110,6 +160,62 @@ export function BoardToolbar({
 
 	return (
 		<div className="absolute bottom-24 left-4 z-10 flex flex-col gap-2">
+			{/* Interaction Mode */}
+			<div className="flex items-center gap-1 bg-card/90 backdrop-blur rounded-lg p-1 shadow-lg border border-border">
+				<Button
+					variant={interactionMode === "select" ? "secondary" : "ghost"}
+					size="icon"
+					onClick={() => handleModeChange("select")}
+					title="Select Mode (V)"
+				>
+					<MousePointer2 className="w-4 h-4" />
+				</Button>
+				<Button
+					variant={interactionMode === "pan" ? "secondary" : "ghost"}
+					size="icon"
+					onClick={() => handleModeChange("pan")}
+					title="Pan Mode (H)"
+				>
+					<Hand className="w-4 h-4" />
+				</Button>
+			</div>
+
+			{/* Shapes & Text */}
+			<div className="flex items-center gap-1 bg-card/90 backdrop-blur rounded-lg p-1 shadow-lg border border-border">
+				<Button
+					variant={pendingShapeType === "rectangle" ? "secondary" : "ghost"}
+					size="icon"
+					onClick={() => handleShapeClick("rectangle")}
+					title="Add Rectangle"
+				>
+					<Square className="w-4 h-4" />
+				</Button>
+				<Button
+					variant={pendingShapeType === "circle" ? "secondary" : "ghost"}
+					size="icon"
+					onClick={() => handleShapeClick("circle")}
+					title="Add Circle"
+				>
+					<Circle className="w-4 h-4" />
+				</Button>
+				<Button
+					variant={pendingShapeType === "diamond" ? "secondary" : "ghost"}
+					size="icon"
+					onClick={() => handleShapeClick("diamond")}
+					title="Add Diamond"
+				>
+					<Diamond className="w-4 h-4" />
+				</Button>
+				<Button
+					variant={interactionMode === "text" ? "secondary" : "ghost"}
+					size="icon"
+					onClick={handleTextClick}
+					title="Add Text"
+				>
+					<Type className="w-4 h-4" />
+				</Button>
+			</div>
+
 			{/* Zoom controls */}
 			<div className="flex items-center gap-1 bg-card/90 backdrop-blur rounded-lg p-1 shadow-lg border border-border">
 				<Button

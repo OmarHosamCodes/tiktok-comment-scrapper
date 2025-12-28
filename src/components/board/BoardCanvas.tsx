@@ -1,33 +1,38 @@
 import {
+	addEdge,
 	Background,
 	BackgroundVariant,
-	MarkerType,
-	MiniMap,
-	ReactFlow,
-	addEdge,
 	type Connection,
 	type EdgeChange,
+	MarkerType,
+	MiniMap,
 	type NodeChange,
 	type OnSelectionChangeFunc,
+	ReactFlow,
+	useReactFlow,
 } from "@xyflow/react";
 import { nanoid } from "nanoid";
 import { useCallback, useEffect, useState } from "react";
 import {
-	useBoardHistory,
-	useBoardStore,
 	type BoardNode,
 	type GroupNodeData,
+	useBoardHistory,
+	useBoardStore,
 } from "../../stores/board-store";
 import { BoardToolbar } from "./BoardToolbar";
 import { CommentNode } from "./CommentNode";
 import { ContextMenu } from "./ContextMenu";
 import { GroupNode } from "./GroupNode";
 import { ReplyEdge } from "./ReplyEdge";
+import { ShapeNode } from "./ShapeNode";
+import { TextNode } from "./TextNode";
 
 // Define nodeTypes with looser typing to avoid React Flow v12 generic issues
 const nodeTypes = {
 	comment: CommentNode,
 	group: GroupNode,
+	shape: ShapeNode,
+	text: TextNode,
 };
 
 const edgeTypes = {
@@ -61,7 +66,13 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 		onNodesChange,
 		onEdgesChange,
 		setSelectedNodes,
+		interactionMode,
+		setInteractionMode,
+		pendingShapeType,
+		setPendingShapeType,
 	} = useBoardStore();
+
+	const reactFlowInstance = useReactFlow();
 
 	const { undo, redo } = useBoardHistory();
 
@@ -88,6 +99,101 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 
 	const handleCloseContextMenu = useCallback(() => {
 		setContextMenu(null);
+	}, []);
+
+	// Handle pane click for creating shapes and text
+	const handlePaneClick = useCallback(
+		(event: React.MouseEvent) => {
+			handleCloseContextMenu();
+
+			// Check if we need to create a shape or text
+			if (interactionMode === "shape" && pendingShapeType) {
+				const bounds = (event.target as HTMLElement).getBoundingClientRect();
+				const position = reactFlowInstance.screenToFlowPosition({
+					x: event.clientX - bounds.left,
+					y: event.clientY - bounds.top,
+				});
+
+				const newShape: BoardNode = {
+					id: nanoid(),
+					type: "shape",
+					position,
+					style: { width: 100, height: 100 },
+					data: {
+						dbId: "",
+						shapeType: pendingShapeType,
+						color: "#3b82f6",
+						borderColor: "#2563eb",
+					},
+				};
+
+				setNodes([...nodes, newShape]);
+				// Reset to select mode after placing
+				setInteractionMode("select");
+				setPendingShapeType(null);
+			} else if (interactionMode === "text") {
+				const bounds = (event.target as HTMLElement).getBoundingClientRect();
+				const position = reactFlowInstance.screenToFlowPosition({
+					x: event.clientX - bounds.left,
+					y: event.clientY - bounds.top,
+				});
+
+				const newText: BoardNode = {
+					id: nanoid(),
+					type: "text",
+					position,
+					style: { width: 200, height: 50 },
+					data: {
+						dbId: "",
+						text: "Double-click to edit",
+						fontSize: 16,
+						fontWeight: "normal",
+						color: "#ffffff",
+					},
+				};
+
+				setNodes([...nodes, newText]);
+				// Reset to select mode after placing
+				setInteractionMode("select");
+			}
+		},
+		[
+			handleCloseContextMenu,
+			interactionMode,
+			pendingShapeType,
+			reactFlowInstance,
+			nodes,
+			setNodes,
+			setInteractionMode,
+			setPendingShapeType,
+		],
+	);
+
+	// Handle text node updates
+	useEffect(() => {
+		const handleTextUpdate = (
+			event: CustomEvent<{ id: string; text: string }>,
+		) => {
+			const { id, text } = event.detail;
+			const { nodes: currentNodes, setNodes } = useBoardStore.getState();
+			setNodes(
+				currentNodes.map((n) =>
+					n.id === id && n.type === "text"
+						? { ...n, data: { ...n.data, text } }
+						: n,
+				) as BoardNode[],
+			);
+		};
+
+		window.addEventListener(
+			"textNodeUpdate",
+			handleTextUpdate as EventListener,
+		);
+		return () =>
+			window.removeEventListener(
+				"textNodeUpdate",
+				handleTextUpdate as EventListener,
+			);
 	}, []);
 
 	// Fetch board data
@@ -220,6 +326,14 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 	// Handle keyboard shortcuts
 	useEffect(() => {
 		const handleKeyDown = (e: KeyboardEvent) => {
+			// Ignore if typing in an input
+			if (
+				e.target instanceof HTMLInputElement ||
+				e.target instanceof HTMLTextAreaElement
+			) {
+				return;
+			}
+
 			if ((e.ctrlKey || e.metaKey) && e.key === "z") {
 				if (e.shiftKey) {
 					redo();
@@ -228,11 +342,35 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 				}
 				e.preventDefault();
 			}
+
+			// Interaction mode shortcuts
+			if (e.key === "v" || e.key === "V") {
+				setInteractionMode("select");
+				setPendingShapeType(null);
+			} else if (e.key === "h" || e.key === "H") {
+				setInteractionMode("pan");
+				setPendingShapeType(null);
+			} else if (e.key === "t" || e.key === "T") {
+				setInteractionMode("text");
+				setPendingShapeType(null);
+			} else if (e.key === "r" || e.key === "R") {
+				setInteractionMode("shape");
+				setPendingShapeType("rectangle");
+			} else if (e.key === "o" || e.key === "O") {
+				setInteractionMode("shape");
+				setPendingShapeType("circle");
+			} else if (e.key === "d" || e.key === "D") {
+				setInteractionMode("shape");
+				setPendingShapeType("diamond");
+			} else if (e.key === "Escape") {
+				setInteractionMode("select");
+				setPendingShapeType(null);
+			}
 		};
 
 		window.addEventListener("keydown", handleKeyDown);
 		return () => window.removeEventListener("keydown", handleKeyDown);
-	}, [undo, redo]);
+	}, [undo, redo, setInteractionMode, setPendingShapeType]);
 
 	// Handle node position changes and sync to server
 	const handleNodesChange = useCallback(
@@ -259,9 +397,16 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 						const node = nodes.find((n) => n.id === change.id);
 						if (!node) return null;
 
-						const update: any = {
-							id: node.data.dbId,
-							type: node.type,
+						const update: {
+							id: string;
+							type: string;
+							positionX?: number;
+							positionY?: number;
+							width?: number;
+							height?: number;
+						} = {
+							id: node.data.dbId as string,
+							type: node.type as string,
 						};
 
 						if (change.type === "position" && change.position) {
@@ -421,39 +566,48 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 				zIndex: -1,
 			};
 
-			// Optimistic update: Add group and move children immediately
-			const updatedNodes = [...currentNodes, newGroup];
-
 			if (selectedCommentNodes.length > 0) {
-				// Update nodes to be children of the new group
-				const finalNodes = updatedNodes.map((n) => {
-					if (
-						selectedCommentNodes.some((s) => s.id === n.id) &&
-						n.type === "comment"
-					) {
-						const absPos = getAbsolutePosition(n);
-						// Calculate relative position within the group
-						const relativeX = absPos.x - position.x;
-						const relativeY = absPos.y - position.y;
+				// Two-phase update to fix position issue:
+				// Phase 1: Add the group first
+				setNodes([...currentNodes, newGroup]);
 
-						return {
-							...n,
-							parentId: groupId,
-							position: {
-								x: Math.max(20, relativeX),
-								y: Math.max(40, relativeY),
-							},
-							extent: "parent" as const,
-							// Ensure we clear any previous parent logic if necessary
-							expandParent: undefined,
-						};
-					}
-					return n;
-				}) as BoardNode[];
+				// Phase 2: Update children in a separate tick after React Flow processes the group
+				setTimeout(() => {
+					const { nodes: latestNodes } = useBoardStore.getState();
+					const updatedNodes = latestNodes.map((n) => {
+						if (
+							selectedCommentNodes.some((s) => s.id === n.id) &&
+							n.type === "comment"
+						) {
+							// Get the original absolute position from selectedCommentNodes
+							const originalNode = selectedCommentNodes.find(
+								(s) => s.id === n.id,
+							);
+							if (!originalNode) return n;
 
-				setNodes(finalNodes);
+							const absPos = getAbsolutePosition(originalNode);
+							// Calculate relative position within the group
+							const relativeX = absPos.x - position.x;
+							const relativeY = absPos.y - position.y;
+
+							return {
+								...n,
+								parentId: groupId,
+								position: {
+									x: Math.max(20, relativeX),
+									y: Math.max(40, relativeY),
+								},
+								extent: "parent" as const,
+								expandParent: undefined,
+							};
+						}
+						return n;
+					}) as BoardNode[];
+
+					setNodes(updatedNodes);
+				}, 0);
 			} else {
-				setNodes(updatedNodes);
+				setNodes([...currentNodes, newGroup]);
 			}
 
 			// Create group on server
@@ -502,16 +656,16 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 
 	// Delete selected nodes
 	const handleDeleteSelected = useCallback(() => {
-		const { selectedNodes, nodes, setNodes } = useBoardStore.getState();
+		const { selectedNodes, nodes: currentNodes } = useBoardStore.getState();
 
 		// Identify groups to be deleted
-		const groupsToDelete = nodes.filter(
+		const groupsToDelete = currentNodes.filter(
 			(n) => selectedNodes.includes(n.id) && n.type === "group",
 		);
 		const groupIdsToDelete = groupsToDelete.map((g) => g.id);
 
 		// Handle orphan rescue: if a group is deleted, detach its children
-		let nextNodes = nodes;
+		let nextNodes = currentNodes;
 
 		if (groupIdsToDelete.length > 0) {
 			nextNodes = nextNodes.map((n) => {
@@ -536,7 +690,7 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 
 			// Sync detached children to server
 			const detachedNodes = nextNodes.filter((n) => {
-				const oldNode = nodes.find((old) => old.id === n.id);
+				const oldNode = currentNodes.find((old) => old.id === n.id);
 				return (
 					n.parentId === undefined &&
 					oldNode?.parentId &&
@@ -565,7 +719,7 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 
 		// Delete from server
 		for (const nodeId of selectedNodes) {
-			const node = nodes.find((n) => n.id === nodeId);
+			const node = currentNodes.find((n) => n.id === nodeId);
 			if (!node || !slug || !node.data.dbId) continue;
 
 			const endpoint =
@@ -600,6 +754,7 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 	}
 
 	return (
+		// biome-ignore lint/a11y/noStaticElementInteractions: Context menu on canvas is standard UX pattern
 		<div className="w-full h-screen" onContextMenu={handleContextMenu}>
 			<ReactFlow
 				nodes={nodes}
@@ -619,7 +774,11 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 				maxZoom={2}
 				proOptions={{ hideAttribution: true }}
 				className="bg-background"
-				onPaneClick={handleCloseContextMenu}
+				onPaneClick={handlePaneClick}
+				panOnDrag={interactionMode === "pan"}
+				selectionOnDrag={interactionMode === "select"}
+				panOnScroll={interactionMode === "pan"}
+				nodesDraggable={interactionMode === "select"}
 			>
 				<Background
 					variant={BackgroundVariant.Dots}

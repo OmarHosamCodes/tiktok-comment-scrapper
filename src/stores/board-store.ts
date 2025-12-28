@@ -26,9 +26,31 @@ export interface GroupNodeData {
 	dbId: string;
 }
 
+export interface ShapeNodeData {
+	[key: string]: unknown;
+	shapeType: "rectangle" | "circle" | "diamond";
+	color: string;
+	borderColor: string;
+	dbId: string;
+}
+
+export interface TextNodeData {
+	[key: string]: unknown;
+	text: string;
+	fontSize: number;
+	fontWeight: "normal" | "bold";
+	color: string;
+	dbId: string;
+}
+
 export type CommentNode = Node<CommentNodeData, "comment">;
 export type GroupNode = Node<GroupNodeData, "group">;
-export type BoardNode = CommentNode | GroupNode;
+export type ShapeNode = Node<ShapeNodeData, "shape">;
+export type TextNode = Node<TextNodeData, "text">;
+export type BoardNode = CommentNode | GroupNode | ShapeNode | TextNode;
+
+// Interaction modes
+export type InteractionMode = "select" | "pan" | "shape" | "text";
 
 export interface BoardData {
 	id: string;
@@ -49,10 +71,20 @@ interface BoardState {
 	edges: Edge[];
 	selectedNodes: string[];
 
+	// Interaction mode
+	interactionMode: InteractionMode;
+	pendingShapeType: "rectangle" | "circle" | "diamond" | null;
+
 	// Actions
 	setBoard: (board: BoardData | null) => void;
 	setLoading: (loading: boolean) => void;
 	setError: (error: string | null) => void;
+
+	// Interaction mode
+	setInteractionMode: (mode: InteractionMode) => void;
+	setPendingShapeType: (
+		type: "rectangle" | "circle" | "diamond" | null,
+	) => void;
 
 	// Node/Edge management
 	setNodes: (nodes: BoardNode[]) => void;
@@ -93,6 +125,8 @@ const initialState = {
 	nodes: [],
 	edges: [],
 	selectedNodes: [],
+	interactionMode: "select" as InteractionMode,
+	pendingShapeType: null as "rectangle" | "circle" | "diamond" | null,
 };
 
 export const useBoardStore = create<BoardState>()(
@@ -103,6 +137,9 @@ export const useBoardStore = create<BoardState>()(
 			setBoard: (board) => set({ board }),
 			setLoading: (isLoading) => set({ isLoading }),
 			setError: (error) => set({ error }),
+
+			setInteractionMode: (mode) => set({ interactionMode: mode }),
+			setPendingShapeType: (type) => set({ pendingShapeType: type }),
 
 			setNodes: (nodes) => set({ nodes }),
 			setEdges: (edges) => set({ edges }),
