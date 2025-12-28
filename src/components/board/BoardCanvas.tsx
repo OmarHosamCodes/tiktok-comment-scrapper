@@ -255,6 +255,7 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 				// Sync updates to server
 				const updates = changesToSync
 					.map((change) => {
+						if (!("id" in change)) return null;
 						const node = nodes.find((n) => n.id === change.id);
 						if (!node) return null;
 
@@ -345,8 +346,12 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 	// Create a new group (optionally grouping selected nodes)
 	const handleCreateGroup = useCallback(
 		(groupSelectedNodes = false) => {
-			const currentNodes = useBoardStore.getState().nodes;
-			const currentSelectedNodes = useBoardStore.getState().selectedNodes;
+			const {
+				nodes: currentNodes,
+				selectedNodes: currentSelectedNodes,
+				setNodes,
+				updateGroup,
+			} = useBoardStore.getState();
 
 			// Default position and size
 			let position = { x: 100, y: 100 };
@@ -361,26 +366,45 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 					)
 				: [];
 
+			// Helper to get absolute position (handling nested nodes)
+			const getAbsolutePosition = (node: BoardNode) => {
+				let x = node.position.x;
+				let y = node.position.y;
+				if (node.parentId) {
+					const parent = currentNodes.find((n) => n.id === node.parentId);
+					if (parent) {
+						x += parent.position.x;
+						y += parent.position.y;
+					}
+				}
+				return { x, y };
+			};
+
 			// If grouping selected nodes, calculate bounding box
 			if (selectedCommentNodes.length > 0) {
-				const nodeWidth = 280; // CommentNode width
-				const nodeHeight = 160; // Approximate CommentNode height
+				let minX = Infinity;
+				let minY = Infinity;
+				let maxX = -Infinity;
+				let maxY = -Infinity;
 
-				const minX = Math.min(...selectedCommentNodes.map((n) => n.position.x));
-				const minY = Math.min(...selectedCommentNodes.map((n) => n.position.y));
-				const maxX = Math.max(
-					...selectedCommentNodes.map((n) => n.position.x + nodeWidth),
-				);
-				const maxY = Math.max(
-					...selectedCommentNodes.map((n) => n.position.y + nodeHeight),
-				);
+				for (const n of selectedCommentNodes) {
+					const pos = getAbsolutePosition(n);
+					// Use measured dimensions if available, otherwise fallbacks
+					const w = n.measured?.width ?? n.width ?? 280;
+					const h = n.measured?.height ?? n.height ?? 160;
+
+					minX = Math.min(minX, pos.x);
+					minY = Math.min(minY, pos.y);
+					maxX = Math.max(maxX, pos.x + w);
+					maxY = Math.max(maxY, pos.y + h);
+				}
 
 				position = {
 					x: minX - padding,
 					y: minY - padding - 20, // Extra space for group header
 				};
 				width = maxX - minX + padding * 2;
-				height = maxY - minY + padding * 2 + 20; // Extra space for group header
+				height = maxY - minY + padding * 2 + 20;
 			}
 
 			const groupId = nanoid();
@@ -407,9 +431,10 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 						selectedCommentNodes.some((s) => s.id === n.id) &&
 						n.type === "comment"
 					) {
+						const absPos = getAbsolutePosition(n);
 						// Calculate relative position within the group
-						const relativeX = n.position.x - position.x;
-						const relativeY = n.position.y - position.y;
+						const relativeX = absPos.x - position.x;
+						const relativeY = absPos.y - position.y;
 
 						return {
 							...n,
@@ -419,6 +444,8 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 								y: Math.max(40, relativeY),
 							},
 							extent: "parent" as const,
+							// Ensure we clear any previous parent logic if necessary
+							expandParent: undefined,
 						};
 					}
 					return n;
@@ -446,13 +473,14 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 					.then((res) => res.json())
 					.then((data) => {
 						// Update node with server ID
-						useBoardStore.getState().updateGroup(groupId, { dbId: data.id });
+						updateGroup(groupId, { dbId: data.id });
 
 						// If grouping selected nodes, persist the relationship to server
 						if (selectedCommentNodes.length > 0) {
 							for (const commentNode of selectedCommentNodes) {
-								const relativeX = commentNode.position.x - position.x;
-								const relativeY = commentNode.position.y - position.y;
+								const absPos = getAbsolutePosition(commentNode);
+								const relativeX = absPos.x - position.x;
+								const relativeY = absPos.y - position.y;
 
 								fetch(`/api/boards/${slug}/comments/${commentNode.data.dbId}`, {
 									method: "PATCH",
@@ -469,7 +497,7 @@ export function BoardCanvas({ slug }: BoardCanvasProps) {
 					.catch(console.error);
 			}
 		},
-		[slug, setNodes],
+		[slug],
 	);
 
 	// Delete selected nodes
