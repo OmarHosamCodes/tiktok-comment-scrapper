@@ -1,8 +1,8 @@
 import {
+	chromium,
 	type Browser,
 	type BrowserContext,
 	type Page,
-	chromium,
 } from "playwright";
 import { Comment, Comments } from "../types";
 import { logger } from "../utils";
@@ -70,7 +70,9 @@ export class TiktokComment {
 			create_time: data.create_time,
 			avatar: data.user.avatar_thumb?.url_list?.[0] ?? "",
 			total_reply: data.reply_comment_total,
-			parent_comment_id: parentCommentId || data.reply_id,
+			parent_comment_id:
+				parentCommentId ||
+				(data.reply_id && data.reply_id !== "0" ? data.reply_id : undefined),
 		};
 
 		const comment = new Comment(
@@ -162,8 +164,7 @@ export class TiktokComment {
 					RETRY_CONFIG.maxDelay,
 				);
 				logger.warn(
-					`Fetch failed, retrying in ${delay}ms (attempt ${retryCount + 1}/${
-						RETRY_CONFIG.maxRetries
+					`Fetch failed, retrying in ${delay}ms (attempt ${retryCount + 1}/${RETRY_CONFIG.maxRetries
 					})...`,
 				);
 				await new Promise((resolve) => setTimeout(resolve, delay));

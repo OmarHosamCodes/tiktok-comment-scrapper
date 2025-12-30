@@ -21,6 +21,7 @@ import {
 	Zap,
 } from "lucide-react";
 import { useCallback, useMemo, useRef, useState } from "react";
+import { ExportThreadView } from "./components/export-thread-view";
 import { TikTokComment } from "./components/tiktok-comment";
 import { Alert, AlertDescription } from "./components/ui/alert";
 import { Badge } from "./components/ui/badge";
@@ -83,7 +84,21 @@ export function App({ navigateToBoard }: AppProps) {
 			[];
 
 		for (const comment of result.comments) {
-			items.push({ comment, isReply: false });
+			// Check if this "top-level" comment is actually a reply
+			// The scraper might return replies in the main list if they are fetched directly or via cursor
+			// data.reply_id might be "0" for top level comments, so we must check for that
+			const parentId =
+				comment.parent_comment_id && comment.parent_comment_id !== "0"
+					? comment.parent_comment_id
+					: undefined;
+			const isActuallyReply = !!parentId;
+
+			items.push({
+				comment,
+				isReply: isActuallyReply,
+				parentId: parentId,
+			});
+
 			for (const reply of comment.replies) {
 				items.push({
 					comment: reply,
@@ -198,39 +213,77 @@ export function App({ navigateToBoard }: AppProps) {
 			const zip = new JSZip();
 			const folder = zip.folder("comments");
 
-			// Capture images in parallel batches for speed
-			const BATCH_SIZE = 10;
-			const batches: Comment[][] = [];
+			// Process selected comments
+			const exportItems: {
+				id: string;
+				element: HTMLElement;
+				isThread: boolean;
+			}[] = [];
 
-			for (let i = 0; i < selectedComments.length; i += BATCH_SIZE) {
-				batches.push(selectedComments.slice(i, i + BATCH_SIZE));
+			// We need to temporarily render the export views for threads
+			// This is handled by the hidden container in the render method
+
+			// First, identify what we need to export
+			for (const comment of selectedComments) {
+				// If it's a parent comment, we want to export it with its replies (if any exist)
+				// check if it is a reply itself
+				const isReply = !!comment.parent_comment_id;
+
+				if (!isReply) {
+					// It's a parent. Check if we have an export view for it (which includes replies)
+					const exportEl = document.getElementById(
+						`export-thread-${comment.comment_id}`,
+					);
+					if (exportEl) {
+						exportItems.push({
+							id: comment.comment_id,
+							element: exportEl,
+							isThread: true,
+						});
+						continue;
+					}
+				}
+
+				// Fallback or if it is a reply: export just the comment element
+				const commentEl = commentRefs.current.get(comment.comment_id);
+				if (commentEl) {
+					exportItems.push({
+						id: comment.comment_id,
+						element: commentEl,
+						isThread: false,
+					});
+				}
 			}
 
-			for (const batch of batches) {
-				const capturePromises = batch.map(async (comment) => {
-					const commentEl = commentRefs.current.get(comment.comment_id);
-					if (!commentEl) return null;
+			// Capture images in parallel batches
+			const BATCH_SIZE = 10;
+			for (let i = 0; i < exportItems.length; i += BATCH_SIZE) {
+				const batch = exportItems.slice(i, i + BATCH_SIZE);
 
-					try {
-						const dataUrl = await htmlToImage.toPng(
-							commentEl,
-							PngExportOptions,
-						);
-						return { id: comment.comment_id, data: dataUrl.split(",")[1] };
-					} catch (err) {
-						console.error(
-							`Failed to capture comment ${comment.comment_id}:`,
-							err,
-						);
-						return null;
-					}
-				});
+				const results = await Promise.all(
+					batch.map(async (item) => {
+						try {
+							const dataUrl = await htmlToImage.toPng(
+								item.element,
+								PngExportOptions,
+							);
+							const data = dataUrl.split(",")[1];
+							if (!data) return null;
 
-				const results = await Promise.all(capturePromises);
+							return {
+								name: `${item.id}${item.isThread ? "-thread" : ""}.png`,
+								data,
+							};
+						} catch (err) {
+							console.error(`Failed to capture ${item.id}:`, err);
+							return null;
+						}
+					}),
+				);
 
 				for (const result of results) {
 					if (result) {
-						folder?.file(`${result.id}.png`, result.data, { base64: true });
+						folder?.file(result.name, result.data, { base64: true });
 					}
 				}
 			}
@@ -774,6 +827,36 @@ export function App({ navigateToBoard }: AppProps) {
 					</div>
 				</div>
 			</footer>
+
+			{/* Hidden Export Container */}
+			<div
+				style={{
+					position: "absolute",
+					top: 0,
+					left: 0,
+					opacity: 0,
+					pointerEvents: "none",
+					zIndex: -1,
+				}}
+			>
+				{selectedComments.map((comment) => {
+					// Only render thread view for parents that have replies
+					if (comment.parent_comment_id) return null;
+
+					const replies = allComments.filter(
+						(c) => c.parent_comment_id === comment.comment_id,
+					);
+
+					return (
+						<div
+							key={`export-wrapper-${comment.comment_id}`}
+							id={`export-thread-${comment.comment_id}`}
+						>
+							<ExportThreadView comment={comment} replies={replies} />
+						</div>
+					);
+				})}
+			</div>
 		</div>
 	);
 }
