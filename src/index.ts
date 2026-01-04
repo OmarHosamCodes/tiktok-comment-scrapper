@@ -12,8 +12,16 @@ import {
 	type NewBoardEdge,
 } from "./db/schema";
 import homepage from "./index.html";
-import { TiktokComment } from "./scraper";
+import {
+	FacebookComment,
+	InstagramComment,
+	sessionManager,
+	TiktokComment,
+	YoutubeComment,
+	type SessionPlatform,
+} from "./scraper";
 import type { CommentData, CommentsData } from "./types";
+import { detectPlatform } from "./utils";
 
 const PORT = process.env.PORT ? Number.parseInt(process.env.PORT, 10) : 3000;
 
@@ -70,39 +78,97 @@ const server = serve({
 	routes: {
 		"/": homepage,
 
-		// JSON API endpoint for scraping (replaces SSE)
+		// JSON API endpoint for scraping (multi-platform)
 		"/api/scrape": {
 			async POST(req) {
 				try {
 					const body = (await req.json()) as { url?: string; id?: string };
+					const url = body.url || "";
 					let id = body.id;
 
-					// Handle URL input
-					if (body.url && !id) {
-						if (isShortUrl(body.url)) {
-							id = await resolveShortUrl(body.url);
-							if (!id) {
-								return Response.json(
-									{ error: "Failed to resolve short URL" },
-									{ status: 400 },
-								);
+					// Detect platform from URL
+					const platform = detectPlatform(url);
+
+					// Handle based on platform
+					if (platform === "tiktok") {
+						// Handle TikTok URL input
+						if (url && !id) {
+							if (isShortUrl(url)) {
+								id = await resolveShortUrl(url);
+								if (!id) {
+									return Response.json(
+										{ error: "Failed to resolve short URL" },
+										{ status: 400 },
+									);
+								}
+							} else {
+								id = extractVideoId(url);
 							}
-						} else {
-							id = extractVideoId(body.url);
 						}
+
+						if (!id || !/^\d+$/.test(id)) {
+							return Response.json(
+								{ error: "Invalid TikTok video ID" },
+								{ status: 400 },
+							);
+						}
+
+						const scraper = new TiktokComment();
+						const result = await scraper.scrape(id);
+
+						return Response.json({ ...result.dict, platform: "tiktok" });
 					}
 
-					if (!id || !/^\d+$/.test(id)) {
-						return Response.json(
-							{ error: "Invalid video ID" },
-							{ status: 400 },
-						);
+					if (platform === "youtube") {
+						if (!url) {
+							return Response.json(
+								{ error: "YouTube URL required" },
+								{ status: 400 },
+							);
+						}
+
+						const scraper = new YoutubeComment();
+						const result = await scraper.scrape(url);
+
+						return Response.json({ ...result.dict, platform: "youtube" });
 					}
 
-					const scraper = new TiktokComment();
-					const result = await scraper.scrape(id);
+					if (platform === "instagram") {
+						if (!url) {
+							return Response.json(
+								{ error: "Instagram URL required" },
+								{ status: 400 },
+							);
+						}
 
-					return Response.json(result.dict);
+						const scraper = new InstagramComment();
+						const result = await scraper.scrape(url);
+
+						return Response.json({ ...result.dict, platform: "instagram" });
+					}
+
+					if (platform === "facebook") {
+						if (!url) {
+							return Response.json(
+								{ error: "Facebook URL required" },
+								{ status: 400 },
+							);
+						}
+
+						const scraper = new FacebookComment();
+						const result = await scraper.scrape(url);
+
+						return Response.json({ ...result.dict, platform: "facebook" });
+					}
+
+					// Unknown platform
+					return Response.json(
+						{
+							error:
+								"Unsupported platform. Please enter a TikTok, YouTube, Instagram, or Facebook URL.",
+						},
+						{ status: 400 },
+					);
 				} catch (error) {
 					console.error("Scrape error:", error);
 					return Response.json(
@@ -112,6 +178,104 @@ const server = serve({
 						{ status: 500 },
 					);
 				}
+			},
+		},
+
+		// Session management API endpoints
+		"/api/session/status": {
+			GET() {
+				const status = sessionManager.getSessionStatus();
+				const isLoginActive = sessionManager.isLoginActive();
+				return Response.json({
+					sessions: status,
+					loginActive: isLoginActive,
+				});
+			},
+		},
+
+		"/api/session/login": {
+			async GET(req) {
+				const url = new URL(req.url);
+				const platform = url.searchParams.get(
+					"platform",
+				) as SessionPlatform | null;
+
+				if (
+					!platform ||
+					!["instagram", "facebook", "youtube"].includes(platform)
+				) {
+					return Response.json(
+						{ error: "Invalid platform. Use: instagram, facebook, or youtube" },
+						{ status: 400 },
+					);
+				}
+
+				const result = await sessionManager.startLoginSession(platform);
+				return Response.json(result, { status: result.success ? 200 : 400 });
+			},
+		},
+
+		"/api/session/complete": {
+			async GET(req) {
+				const url = new URL(req.url);
+				const platform = url.searchParams.get(
+					"platform",
+				) as SessionPlatform | null;
+
+				if (
+					!platform ||
+					!["instagram", "facebook", "youtube"].includes(platform)
+				) {
+					return Response.json(
+						{ error: "Invalid platform. Use: instagram, facebook, or youtube" },
+						{ status: 400 },
+					);
+				}
+
+				const result = await sessionManager.completeLoginSession(platform);
+				return Response.json(result, { status: result.success ? 200 : 400 });
+			},
+		},
+
+		"/api/session/cancel": {
+			async GET() {
+				const result = await sessionManager.cancelLoginSession();
+				return Response.json(result, { status: result.success ? 200 : 400 });
+			},
+		},
+
+		"/api/session/clear": {
+			async GET(req) {
+				const url = new URL(req.url);
+				const platform = url.searchParams.get(
+					"platform",
+				) as SessionPlatform | null;
+
+				if (
+					platform &&
+					!["instagram", "facebook", "youtube"].includes(platform)
+				) {
+					return Response.json(
+						{ error: "Invalid platform. Use: instagram, facebook, or youtube" },
+						{ status: 400 },
+					);
+				}
+
+				if (platform) {
+					const success = sessionManager.clearSession(platform);
+					return Response.json({
+						success,
+						message: success
+							? `Cleared session for ${platform}`
+							: `Failed to clear session for ${platform}`,
+					});
+				}
+
+				sessionManager.clearAllSessions();
+				return Response.json({
+					success: true,
+					message: "Cleared all sessions",
+				});
 			},
 		},
 
@@ -978,53 +1142,64 @@ function generateCommentSvg(comment: CommentData, isReply = false): string {
   <rect width="${width}" height="${height}" fill="${bgColor}" rx="16"/>
   
   <!-- Gradient Border -->
-  <rect x="2" y="2" width="${width - 4}" height="${height - 4
-		}" fill="none" stroke="url(#${gradientId})" stroke-width="2" rx="14"/>
+  <rect x="2" y="2" width="${width - 4}" height="${
+		height - 4
+	}" fill="none" stroke="url(#${gradientId})" stroke-width="2" rx="14"/>
   
   <!-- Avatar placeholder circle -->
-  <circle cx="${padding + avatarSize / 2}" cy="${padding + avatarSize / 2
-		}" r="${avatarSize / 2}" fill="#374151"/>
-  <text x="${padding + avatarSize / 2}" y="${padding + avatarSize / 2 + 6
-		}" text-anchor="middle" fill="#9ca3af" font-size="20" font-family="Inter, sans-serif">${escapeXml(
-			comment.nickname.charAt(0).toUpperCase(),
-		)}</text>
+  <circle cx="${padding + avatarSize / 2}" cy="${
+		padding + avatarSize / 2
+	}" r="${avatarSize / 2}" fill="#374151"/>
+  <text x="${padding + avatarSize / 2}" y="${
+		padding + avatarSize / 2 + 6
+	}" text-anchor="middle" fill="#9ca3af" font-size="20" font-family="Inter, sans-serif">${escapeXml(
+		comment.nickname.charAt(0).toUpperCase(),
+	)}</text>
   
   <!-- Username -->
-  <text x="${padding + avatarSize + 16}" y="${padding + 20
-		}" fill="#ffffff" font-size="16" font-weight="600" font-family="Inter, sans-serif">${escapeXml(
-			comment.nickname,
-		)}</text>
-  <text x="${padding + avatarSize + 16}" y="${padding + 40
-		}" fill="#64748b" font-size="12" font-family="Inter, sans-serif">@${escapeXml(
-			comment.username,
-		)}</text>
+  <text x="${padding + avatarSize + 16}" y="${
+		padding + 20
+	}" fill="#ffffff" font-size="16" font-weight="600" font-family="Inter, sans-serif">${escapeXml(
+		comment.nickname,
+	)}</text>
+  <text x="${padding + avatarSize + 16}" y="${
+		padding + 40
+	}" fill="#64748b" font-size="12" font-family="Inter, sans-serif">@${escapeXml(
+		comment.username,
+	)}</text>
   
   <!-- Comment text -->
   ${lines
-			.map(
-				(line, i) =>
-					`<text x="${padding + avatarSize + 16}" y="${padding + 70 + i * lineHeight
-					}" fill="#e2e8f0" font-size="14" font-family="Inter, sans-serif">${escapeXml(
-						line,
-					)}</text>`,
-			)
-			.join("\n  ")}
+		.map(
+			(line, i) =>
+				`<text x="${padding + avatarSize + 16}" y="${
+					padding + 70 + i * lineHeight
+				}" fill="#e2e8f0" font-size="14" font-family="Inter, sans-serif">${escapeXml(
+					line,
+				)}</text>`,
+		)
+		.join("\n  ")}
   
   <!-- Timestamp -->
-  <text x="${padding + avatarSize + 16}" y="${height - padding
-		}" fill="#64748b" font-size="11" font-family="Inter, sans-serif">${escapeXml(
-			comment.create_time,
-		)}</text>
+  <text x="${padding + avatarSize + 16}" y="${
+		height - padding
+	}" fill="#64748b" font-size="11" font-family="Inter, sans-serif">${escapeXml(
+		comment.create_time,
+	)}</text>
   
   <!-- Reply count badge -->
-  ${comment.total_reply > 0
-			? `<rect x="${width - 100}" y="${height - 36
-			}" width="80" height="24" fill="${borderColor}" rx="12" opacity="0.2"/>
-  <text x="${width - 60}" y="${height - 20
-			}" text-anchor="middle" fill="${borderColor}" font-size="11" font-weight="500" font-family="Inter, sans-serif">${comment.total_reply
-			} replies</text>`
+  ${
+		comment.total_reply > 0
+			? `<rect x="${width - 100}" y="${
+					height - 36
+				}" width="80" height="24" fill="${borderColor}" rx="12" opacity="0.2"/>
+  <text x="${width - 60}" y="${
+		height - 20
+	}" text-anchor="middle" fill="${borderColor}" font-size="11" font-weight="500" font-family="Inter, sans-serif">${
+		comment.total_reply
+	} replies</text>`
 			: ""
-		}
+	}
 </svg>`;
 }
 

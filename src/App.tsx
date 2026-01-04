@@ -37,7 +37,7 @@ import { Input } from "./components/ui/input";
 import { ScrollArea } from "./components/ui/scroll-area";
 import { Separator } from "./components/ui/separator";
 import { PngExportOptions } from "./constants/png-options";
-import { useScraper, type Comment } from "./hooks/use-scraper";
+import { useScraper, type Comment, type Platform } from "./hooks/use-scraper";
 
 type FilterType = "all" | "comments" | "replies";
 type SortType = "newest" | "oldest" | "most_replies";
@@ -57,7 +57,62 @@ export function App({ navigateToBoard }: AppProps) {
 	const [sendingToBoard, setSendingToBoard] = useState(false);
 	const commentRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
-	const { status, result, error, scrape } = useScraper();
+	const { status, result, error, platform, scrape } = useScraper();
+
+	// Platform display name mapping
+	const platformNames: Record<Platform, string> = {
+		tiktok: "TikTok",
+		facebook: "Facebook",
+		instagram: "Instagram",
+		youtube: "YouTube",
+		unknown: "Social Media",
+	};
+
+	// Detect platform from URL input in real-time
+	const urlPlatform = useMemo((): Platform => {
+		const normalizedUrl = url.toLowerCase().trim();
+
+		if (
+			/tiktok\.com/.test(normalizedUrl) ||
+			/vm\.tiktok\.com/.test(normalizedUrl) ||
+			/vt\.tiktok\.com/.test(normalizedUrl)
+		) {
+			return "tiktok";
+		}
+
+		if (/youtube\.com/.test(normalizedUrl) || /youtu\.be/.test(normalizedUrl)) {
+			return "youtube";
+		}
+
+		if (/instagram\.com/.test(normalizedUrl)) {
+			return "instagram";
+		}
+
+		if (
+			/facebook\.com/.test(normalizedUrl) ||
+			/fb\.watch/.test(normalizedUrl)
+		) {
+			return "facebook";
+		}
+
+		return "unknown";
+	}, [url]);
+
+	// Get theme class based on platform
+	const getThemeClass = (p: Platform): string => {
+		switch (p) {
+			case "tiktok":
+				return "theme-tiktok";
+			case "facebook":
+				return "theme-facebook";
+			case "instagram":
+				return "theme-instagram";
+			case "youtube":
+				return "theme-youtube";
+			default:
+				return "";
+		}
+	};
 
 	// Get all comments including replies flattened
 	const allComments = useMemo(() => {
@@ -372,8 +427,12 @@ export function App({ navigateToBoard }: AppProps) {
 		? new Set(result.comments.map((c) => c.username)).size
 		: 0;
 
+	const themeClass = result
+		? getThemeClass(result.platform || platform)
+		: getThemeClass(urlPlatform);
+
 	return (
-		<div className="min-h-screen flex flex-col bg-background">
+		<div className={`min-h-screen flex flex-col bg-background ${themeClass}`}>
 			{/* Animated background */}
 			<div className="fixed inset-0 overflow-hidden pointer-events-none">
 				<div className="absolute top-0 left-1/4 w-96 h-96 bg-secondary/10 rounded-full blur-3xl" />
@@ -390,10 +449,12 @@ export function App({ navigateToBoard }: AppProps) {
 						</div>
 						<div>
 							<h1 className="text-lg font-semibold gradient-text">
-								TikTok Comment Scraper
+								{result
+									? `${platformNames[result.platform || platform]} Comments`
+									: "Social Media Scraper"}
 							</h1>
 							<p className="text-xs text-muted-foreground">
-								Extract and download video comments
+								Extract comments from TikTok, YouTube, Instagram & Facebook
 							</p>
 						</div>
 					</div>
@@ -410,12 +471,12 @@ export function App({ navigateToBoard }: AppProps) {
 							Powered by Playwright
 						</Badge>
 						<h2 className="text-3xl md:text-4xl lg:text-5xl font-bold tracking-tight">
-							Scrape TikTok Comments{" "}
-							<span className="gradient-text">in Seconds</span>
+							Scrape Comments <span className="gradient-text">in Seconds</span>
 						</h2>
 						<p className="text-muted-foreground text-base md:text-lg max-w-2xl mx-auto">
-							Enter any TikTok video URL and extract all comments with their
-							replies. Search, filter, select, and export as JSON or PNG images.
+							Enter any TikTok, YouTube, Instagram, or Facebook URL and extract
+							all comments with their replies. Search, filter, select, and
+							export.
 						</p>
 					</div>
 
@@ -424,11 +485,10 @@ export function App({ navigateToBoard }: AppProps) {
 						<CardHeader>
 							<CardTitle className="flex items-center gap-2 text-lg">
 								<ExternalLink className="h-5 w-5 text-secondary" />
-								Enter TikTok Video
+								Enter Video URL
 							</CardTitle>
 							<CardDescription>
-								Paste a TikTok video URL (including short links like
-								vt.tiktok.com) or video ID
+								Paste a URL from TikTok, YouTube, Instagram, or Facebook
 							</CardDescription>
 						</CardHeader>
 						<CardContent className="space-y-4">
@@ -437,7 +497,7 @@ export function App({ navigateToBoard }: AppProps) {
 									type="text"
 									value={url}
 									onChange={(e) => setUrl(e.target.value)}
-									placeholder="https://www.tiktok.com/@user/video/... or https://vt.tiktok.com/..."
+									placeholder="Enter a video URL (TikTok, YouTube, Instagram, or Facebook)"
 									disabled={status === "loading"}
 									className="flex-1 h-11"
 									onKeyDown={(e) => e.key === "Enter" && handleScrape()}

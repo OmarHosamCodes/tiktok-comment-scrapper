@@ -1,5 +1,12 @@
 import { useCallback, useState } from "react";
 
+export type Platform =
+	| "tiktok"
+	| "facebook"
+	| "instagram"
+	| "youtube"
+	| "unknown";
+
 export interface Comment {
 	comment_id: string;
 	username: string;
@@ -18,6 +25,9 @@ export interface ScrapeResult {
 	video_url: string;
 	comments: Comment[];
 	has_more: number;
+	platform: Platform;
+	needs_auth?: boolean;
+	auth_message?: string;
 }
 
 export type ScraperStatus = "idle" | "loading" | "success" | "error";
@@ -26,50 +36,62 @@ interface UseScraperReturn {
 	status: ScraperStatus;
 	result: ScrapeResult | null;
 	error: string;
+	platform: Platform;
 	scrape: (url: string) => Promise<void>;
 	reset: () => void;
+}
+
+/**
+ * Detect platform from URL
+ */
+function detectPlatform(url: string): Platform {
+	const normalizedUrl = url.toLowerCase().trim();
+
+	if (
+		/tiktok\.com/.test(normalizedUrl) ||
+		/vm\.tiktok\.com/.test(normalizedUrl) ||
+		/vt\.tiktok\.com/.test(normalizedUrl)
+	) {
+		return "tiktok";
+	}
+
+	if (/youtube\.com/.test(normalizedUrl) || /youtu\.be/.test(normalizedUrl)) {
+		return "youtube";
+	}
+
+	if (/instagram\.com/.test(normalizedUrl)) {
+		return "instagram";
+	}
+
+	if (/facebook\.com/.test(normalizedUrl) || /fb\.watch/.test(normalizedUrl)) {
+		return "facebook";
+	}
+
+	return "unknown";
+}
+
+/**
+ * Validate URL for supported platforms
+ */
+function isValidUrl(input: string): boolean {
+	const platform = detectPlatform(input);
+	return platform !== "unknown";
 }
 
 export function useScraper(): UseScraperReturn {
 	const [status, setStatus] = useState<ScraperStatus>("idle");
 	const [result, setResult] = useState<ScrapeResult | null>(null);
 	const [error, setError] = useState("");
+	const [platform, setPlatform] = useState<Platform>("unknown");
 
 	const scrape = useCallback(async (url: string) => {
-		// Extract video ID or use URL directly
-		const extractVideoId = (input: string): string | null => {
-			if (/^\d+$/.test(input.trim())) {
-				return input.trim();
-			}
+		const detectedPlatform = detectPlatform(url);
+		setPlatform(detectedPlatform);
 
-			const patterns = [
-				/tiktok\.com\/@[^/]+\/video\/(\d+)/,
-				/tiktok\.com\/.*?\/video\/(\d+)/,
-				/vm\.tiktok\.com\/(\w+)/,
-				/vt\.tiktok\.com\/(\w+)/,
-				/tiktok\.com\/t\/(\w+)/,
-			];
-
-			for (const pattern of patterns) {
-				const match = input.match(pattern);
-				if (match) {
-					return match[1];
-				}
-			}
-
-			return null;
-		};
-
-		const isShortUrl = (input: string): boolean => {
-			return (
-				/(?:vm|vt)\.tiktok\.com\/\w+/.test(input) ||
-				/tiktok\.com\/t\/\w+/.test(input)
+		if (!isValidUrl(url)) {
+			setError(
+				"Please enter a valid TikTok, YouTube, Instagram, or Facebook URL",
 			);
-		};
-
-		const videoIdOrShortCode = extractVideoId(url);
-		if (!videoIdOrShortCode && !isShortUrl(url)) {
-			setError("Please enter a valid TikTok video URL or ID");
 			setStatus("error");
 			return;
 		}
@@ -84,9 +106,7 @@ export function useScraper(): UseScraperReturn {
 				headers: {
 					"Content-Type": "application/json",
 				},
-				body: JSON.stringify(
-					isShortUrl(url) ? { url } : { id: videoIdOrShortCode },
-				),
+				body: JSON.stringify({ url }),
 			});
 
 			if (!response.ok) {
@@ -96,6 +116,7 @@ export function useScraper(): UseScraperReturn {
 
 			const data = (await response.json()) as ScrapeResult;
 			setResult(data);
+			setPlatform(data.platform || detectedPlatform);
 			setStatus("success");
 		} catch (err) {
 			setError(err instanceof Error ? err.message : "Scraping failed");
@@ -107,12 +128,14 @@ export function useScraper(): UseScraperReturn {
 		setStatus("idle");
 		setResult(null);
 		setError("");
+		setPlatform("unknown");
 	}, []);
 
 	return {
 		status,
 		result,
 		error,
+		platform,
 		scrape,
 		reset,
 	};
